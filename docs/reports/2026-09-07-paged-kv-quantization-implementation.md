@@ -314,15 +314,15 @@ Native storage and direct prefill remain defaults. No production configuration
 or traffic change is made by these observations.
 
 CI at the interim published parent head `cbd206b24` is separate from the
-forthcoming final feature head:
+published feature branch:
 
 | Check at the recorded head | Observed state |
 |---|---|
-| [Parent provider/coordinator and related CI](https://github.com/Layr-Labs/d-inference/actions/runs/34126435626), [E2E integration](https://github.com/Layr-Labs/d-inference/actions/runs/34126435937) | Passed at the interim parent head; this does not cover later unpushed changes. |
+| [Parent provider/coordinator and related CI](https://github.com/Layr-Labs/d-inference/actions/runs/34126435626), [E2E integration](https://github.com/Layr-Labs/d-inference/actions/runs/34126435937) | Passed at the interim parent head; this does not cover the later execution-identity changes. |
 | [E2E Benchmarks](https://github.com/Layr-Labs/d-inference/actions/runs/34126435612) | Waiting for the existing manual cost approval. `.github/workflows/benchmarks.yml` documents the separate 45-minute macOS benchmark gate; no approval or settings bypass was performed. |
 | [Threat Model Review](https://github.com/Layr-Labs/d-inference/actions/runs/34126435949) | Failed before analysis because its configured review credential was rejected. This is not a completed threat-model review; no secret change was performed. |
 | [LM CodeQL at `da524e5`](https://github.com/Layr-Labs/mlx-swift-lm/actions/runs/34137582458) | All CodeQL checks passed. Model acceptance remains separate. |
-| Final parent feature head | Push and new-head CI remain pending. |
+| [Published feature branch checks](https://github.com/Layr-Labs/d-inference/pull/860/checks) | Code and evidence are pushed. Local pre-push Go formatting/tests, console lint and Next.js build passed; new-head CI was still running at finalization. |
 
 | Draft PR | Scope |
 |---|---|
@@ -331,6 +331,14 @@ forthcoming final feature head:
 | [mlx #17](https://github.com/Layr-Labs/mlx/pull/17) | FP32 wide-head Metal tile sizing |
 | [mlx-c #9](https://github.com/Layr-Labs/mlx-c/pull/9) | Explicit forced-fused C API |
 | [mlx-swift #22](https://github.com/Layr-Labs/mlx-swift/pull/22) | Swift forced-fused binding and dependency pins |
+
+The final runtime/control-plane code is `47da6bf264c22f594e753263fc58bffcc46b1b98`.
+The [committed-source check](../../reports/kv-quantization-2026-09-07/validation/release11-final-code-source-check.json)
+verifies that its 52 modified build-source files retain the hashes recorded
+around the release11 build, with matching dependency heads. The
+[pre-push log](../../reports/kv-quantization-2026-09-07/validation/final-code-pre-push.log)
+retains the final local Go and console checks. Later documentation/evidence
+commits do not change the measured runtime.
 
 All five are draft review surfaces at this snapshot. An updated PR head does
 not retroactively change which source or runtime produced an earlier result.

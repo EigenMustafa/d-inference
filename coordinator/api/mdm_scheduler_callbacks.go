@@ -1,10 +1,6 @@
 package api
 
 import (
-	"bytes"
-	"crypto/sha256"
-
-	"github.com/eigeninference/d-inference/coordinator/attestation"
 	"github.com/eigeninference/d-inference/coordinator/registry"
 	"github.com/eigeninference/d-inference/coordinator/store"
 )
@@ -271,21 +267,6 @@ func (s *mdmVerificationScheduler) applyLateMDA(
 	attemptCancel := job.attemptCancel
 	s.mu.Unlock()
 
-	mdaResult, err := attestation.VerifyMDADeviceAttestation(certChain)
-	if err != nil || mdaResult == nil || !mdaResult.Valid {
-		s.metricCounter("mda_verification_total", "outcome", "invalid")
-		return true
-	}
-	wantFreshness := sha256.Sum256([]byte(bound.attestation.PublicKey))
-	if len(mdaResult.FreshnessCode) == 0 ||
-		!bytes.Equal(mdaResult.FreshnessCode, wantFreshness[:]) ||
-		(mdaResult.DeviceSerial != "" &&
-			mdaResult.DeviceSerial != bound.attestation.SerialNumber) ||
-		(mdaResult.DeviceUDID != "" && mdaResult.DeviceUDID != udid) {
-		s.metricCounter("mda_verification_total", "outcome", "binding_mismatch")
-		return true
-	}
-
 	s.mu.Lock()
 	currentJob := s.jobs[key]
 	currentBinding := s.bindings[seKey]
@@ -305,9 +286,10 @@ func (s *mdmVerificationScheduler) applyLateMDA(
 	if !stillCurrent {
 		return true
 	}
-	if !bound.provider.SetMDAProofIfHardwareBound(certChain, mdaResult, true) {
+	if !s.server.installProcessPosture(bound.provider, bound.attestation, udid, certChain, true) {
 		return true
 	}
+
 	if attemptCancel != nil {
 		attemptCancel()
 	}

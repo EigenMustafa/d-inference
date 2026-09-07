@@ -1,6 +1,6 @@
 # Provider CLI reference
 
-> Last updated: 2026-09-07 · commit `0b46b1618` + working tree
+> Last updated: 2026-09-07 · commit `47da6bf26`
 
 Reference for the `darkbloom` command-line tool: every subcommand and flag, the
 files and identifiers it creates, the `provider.toml` keys it reads with their
@@ -164,6 +164,7 @@ Exit 1 (and `{}` in JSON mode) when no live local server is recorded
 | Ordinary token scores | `--teacher-forced-input <json>` (`String?`, unset), explicit `--model <id>` and `--kv-backend contiguous\|paged` (`BenchmarkCommand.swift`, `teacherForcedOptionError`) |
 | KV generation observations | `--kv-quality-input <json>` (`String?`, unset), explicit `--model <id>` and backend (`BenchmarkCommand+KVQuality.swift`) |
 | KV format | `--kv-quantization native\|int4\|k8v4\|int8` (`"native"`); packed choices require paged execution (`BenchmarkCommand+KVQuantization.swift`) |
+| Packed prefill experiment | `--quantized-prefill direct\|opportunistic` (`String?`, unset resolves to `direct`); benchmark-only and requires a packed format plus explicit paged execution (`BenchmarkCommand+QuantizedPrefill.swift`) |
 | Exact local artifact | `--model-directory <path>` requires explicit model and a matching aggregate hash; supported by teacher-forced, KV quality, sweep, scheduler-prefill and arrival-invariance modes (`BenchmarkCommand+ModelDirectory.swift`) |
 | Scheduler prefill decision | `--scheduler-prefill-decision`, `--expected-model-aggregate-sha256`, `--expected-registered-binary-sha256`, `--expected-version`, `--source-sha`, `--decision-iterations` (`SchedulerPrefillDecisionReport.minimumLiveIterations`), `--output <path>` (`BenchmarkCommand+SchedulerPrefillDecision.swift`) |
 | Sweep | `--sweep`, `--prefill-lengths` (`"128,512,2048"`), `--max-batch` (`6`), `--batch-sizes` (`String?`), `--decode-tokens`, `--decode-prompt-tokens`, `--decode-iterations` (`ThroughputSweep` defaults), `--kv-backend` (`"auto"`) (`BenchmarkCommand+Sweep.swift`) |
@@ -565,6 +566,33 @@ measurement, and results are published only after the final check
 Packed `--sweep` measurements omit the raw native-model prefill microbenchmark;
 use `--scheduler-prefill` to measure the selected packed backend. See the
 [format and accounting reference](../reference/paged-kv-quantization.md).
+
+For decode sweeps, `decodeTiming.overlapAggregateTokensPerSecond` measures the
+common all-row decode interval and `decodeTiming.endToEndTokensPerSecond`
+includes prompt processing and completion. The legacy `aggregateTokensPerSecond`
+can include other rows' prefill and batch drain; it is not an isolated steady
+decode rate (`provider-swift/Sources/ProviderBenchmark/ThroughputSweepDecodeTiming.swift`,
+`DecodeTiming`; `ThroughputSweepReport.swift`, `DecodeSample`). Check
+`decodeCoverage` and `overlapMeetsMinimumSupport` before comparing cells.
+
+`--quantized-prefill direct|opportunistic` is accepted only with `--sweep`,
+`--scheduler-prefill` or `--kv-quality-input`, and requires explicit
+`--kv-backend paged` plus `--kv-quantization int4`, `k8v4` or `int8`.
+It is rejected for teacher-forced scoring, arrival invariance, parity and
+scheduler-prefill decision reports. It is not a `start` flag, environment
+variable or `provider.toml` setting; production prefill remains `direct`
+(`provider-swift/Sources/darkbloom/BenchmarkCommand+QuantizedPrefill.swift`,
+`quantizedPrefillOptionError`).
+
+The `opportunistic` spelling selects native policy `opportunisticSDPA`.
+Eligible calls reserve additional memory before writing KV and fall back to
+direct attention if that reservation fails. Selecting the option therefore
+does not prove the fused route ran. Packed reports include a `quantizedPrefill`
+receipt with graph-built route/token counts, fallback counts, accepted extra
+reservation bytes and a separate terminal-control result. Successful controls
+require `currentAdditionalWorkspaceBytes == 0` after the measured engine's
+shutdown (`provider-swift/Sources/ProviderBenchmark/BenchmarkQuantizedPrefillReceipt.swift`,
+`BenchmarkQuantizedPrefillReceipt.make`); see the [receipt fields](../reference/paged-kv-quantization.md#prefill-receipts).
 
 ## `darkbloom update`
 

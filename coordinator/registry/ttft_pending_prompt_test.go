@@ -186,4 +186,19 @@ func TestTTFTPendingPromptSumsInputsAndRetiresCompletedWork(t *testing.T) {
 	}
 	p.RemovePending(second.RequestID)
 	check(110)
+	// Removing prefill work must not make the remaining decode reservation
+	// disappear from the independent capacity gate.
+	p.mu.Lock()
+	p.BackendCapacity.Slots[0].ActiveTokenBudgetMax = 1_000
+	p.mu.Unlock()
+	arriving := &PendingRequest{RequestID: "capacity-blocked", Model: model, EstimatedPromptTokens: 100, RequestedMaxTokens: 1}
+	if selected, decision := reg.ReserveProviderEx(model, arriving); selected != nil {
+		t.Fatalf("first content released the outstanding output reservation: %+v", decision)
+	}
+	p.RemovePending(first.RequestID)
+	if selected, decision := reg.ReserveProviderEx(model, arriving); selected == nil {
+		t.Fatalf("request should fit after the output reservation is removed: %+v", decision)
+	} else {
+		selected.RemovePending(arriving.RequestID)
+	}
 }

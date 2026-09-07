@@ -1432,6 +1432,7 @@ func (d *dispatchState) dispatchPrimary() dispatchOutcome {
 		}
 		queuePR.Timing.QueuedAt = time.Now()
 		queuePR.Profile = d.profile.NewAttempt(d.requestID, d.attempt, "")
+		d.s.recordPredictivePolicy(queuePR.Profile, d.policy, d.requiresVision)
 		queuePR.Profile.Mark(registry.StampAttemptStart)
 		queuePR.Profile.Mark(registry.StampQueued)
 		// Every exit of the queue path that never reached the wire (queue full,
@@ -1565,6 +1566,7 @@ func (d *dispatchState) dispatchPrimary() dispatchOutcome {
 			ap.Mark(registry.StampDequeued)
 			ap.Mark(registry.StampReserveDone)
 			ap.SetDecision(queuedReq.Decision)
+			ap.SetReservationTTFTCeiling(d.pr.MaxTTFTMs)
 			ap.ProviderID = d.provider.ID
 			d.provider.Mu().Lock()
 			ap.ProviderVersion = d.provider.Version

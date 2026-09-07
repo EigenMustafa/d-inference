@@ -1,6 +1,6 @@
 # Routing: how a request becomes a provider choice
 
-> Last updated: 2026-09-05 · commit `1a9c78d84`
+> Last updated: 2026-09-07 · commit `0b46b1618`
 
 Routing is the part of the coordinator that, given one inference request and
 the live fleet, picks the provider that should run it. It filters the fleet
@@ -55,7 +55,14 @@ alternates. The API layer (`coordinator/api/dispatch.go`) consumes the plan:
 it dispatches to the winner, may probe alternates for capacity quotes
 (`capacityProbeWindow = 250 * time.Millisecond`,
 `dispatchPlanProbeFanout = 8`, `coordinator/api/dispatch_plan_wiring.go`) and
-falls through the plan on retry or hedge.
+falls through the plan on retry or hedge. `ReserveNextFromPlan`
+(`coordinator/registry/dispatch_plan.go`) refreshes remaining time after both
+registry and provider locks are acquired, before evaluating and debiting an
+alternate. An expired request does not reserve a candidate; an enabled
+prediction ceiling shrinks with remaining time, while a disabled ceiling stays
+zero. The writer independently checks expiry before constructing the envelope.
+Recorded policy and deadline values are defined in the
+[prediction telemetry reference](../reference/prediction-decision-telemetry.md).
 
 The same gate chain is reused by the preflight admission check
 (`PredictServable`, `coordinator/registry/servability.go`) and by the queue
@@ -232,12 +239,27 @@ fast prefill is dwarfed by the load. The setters are
 **TTFT estimate.** Separately from cost, each candidate carries an estimated
 time-to-first-token (`ttftMsFromSnapshot`): slot state penalty + prefill of
 tokens queued ahead + this request's prefill + one decode step
-(`1000 / effectiveTPS`), then multiplied by the per-(model, chip family)
-calibration ratio learned from settled requests
+(`1000 / effectiveTPS`). The per-(model, chip family) calibration scales only
+the flow terms, leaving the cold-load state penalty unchanged. It learns
+dispatch-to-first-content samples at content commit, not full completion
 (`ttftCalibration.appliedRatio`, `coordinator/registry/ttft_calibration.go`).
-`ttftOccupancyAlpha` (default `0.0`, `SetTTFTOccupancyAlpha`) optionally
-blends in occupancy. This estimate drives the `ttft_ceiling` gate, hedge
+`ttftOccupancyAlpha` applies only to the diagnostic shadow estimate, including
+when `EIGENINFERENCE_TTFT_ADMISSION_MODE=enforce`; it does not change the live TTFT ceiling.
+The live estimate drives the `ttft_ceiling` gate, hedge
 timing and the `Retry-After` header; it is not a cost term.
+
+When the matching heartbeat reports zero running and waiting requests,
+`fillSnapshotPendingAndPool` supplies each local pending request's own prompt
+estimate to `queuedPrefillTokensAhead`. Attempts that already committed
+content contribute no further prefill. Non-positive prompt estimates and
+cache-routing participants retain the arriving-prompt proxy because their
+prefill work is unknown. With nonzero heartbeat occupancy, the existing
+waiting-count proxy remains: the coordinator cannot join those counts to
+individual pending request phases. These are estimates of full prompt work,
+not measurements of remaining provider compute. Output reservations remain
+memory accounting and never become serial prefill work. The bounded audit
+and synthetic before/after evidence are in the
+[admission calibration baseline](../reports/2026-09-06-admission-calibration-baseline.md).
 
 **Cache service cost.** After pricing, `applyCacheRoutingCost` compares the
 request's avoidable prefill work with the confirmed endpoint's restore cost.

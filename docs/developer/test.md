@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-07 · commit `8ca30e4be`
+> Last updated: 2026-09-07 · commit `0b46b1618`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -45,6 +45,25 @@ make test   # coordinator-test prompt-sidecar-test provider-test ui-test benchma
 
 ### 2. Coordinator (Go)
 
+Run prediction telemetry checks from the repository root:
+
+```bash
+go test -race ./coordinator/api ./coordinator/registry ./coordinator/protocol ./coordinator/store
+```
+
+API fixtures use isolated encrypted WebSocket providers;
+Postgres tests require an explicitly disposable `DATABASE_URL` and include an
+upgrade from the old profile schema. See
+[prediction telemetry](../reference/prediction-decision-telemetry.md).
+
+The [admission calibration baseline](../reports/2026-09-06-admission-calibration-baseline.md)
+gives the focused `TestTTFTPendingPrompt` comparison command. Its registry
+cases exercise preflight, reservation, retained-plan revalidation and retained
+output capacity. The HTTP cases cover both a feasible alternative behind a
+long pending prompt and a long arrival completing behind a short pending prompt.
+They use a real isolated coordinator and encrypted WebSocket providers with
+scripted compute. It does not require model downloads or production access.
+
 The CI formatting step checks tracked Go files with `gofmt`. It excludes
 `docs/reports/evidence/`, whose captured source bytes are immutable and bound
 by evidence manifests. Live Go source remains subject to the formatting gate.
@@ -57,6 +76,13 @@ DATABASE_URL='postgres://testbed:testbed@127.0.0.1:5432/testbed?sslmode=disable'
 gofmt -l .                                 # must print nothing
 golangci-lint run                          # .golangci.yml
 ```
+
+`TestProfile_RequestProfilesRecorded` checks that the stored transport estimate
+matches the difference of coordinator and provider spans. Negative values remain
+valid observations; this is not a direct nonnegative network-latency measurement.
+The focused `TestApplyProviderProfileTransportEstimateArithmetic` regression covers
+positive, negative and missing operands in
+`coordinator/api/profiler_provider_test.go`.
 
 Store tests that need Postgres skip themselves when `DATABASE_URL` is unset
 (`coordinator/store/harness_test.go`, `testPostgresStore`); CI provides a
@@ -123,6 +149,24 @@ Without it kernel-backed tests fail or silently exercise a different kernel
 set than production. To run a subset: `cd provider-swift && swift test
 --skip-build --filter <Suite>` after `make provider-test` has staged the
 metallib once.
+
+Tests that change process-wide MLX settings must use Swift Testing's
+`#expect(processExitsWith: .success)` child-process boundary. Restoring an
+environment variable does not reset MLX's cached value, and `.serialized`
+does not isolate other suites. See `StartCommandTests.defaultApplyProjectsSettings`
+in `provider-swift/Tests/DarkbloomCLITests/StartCommandTests.swift` and
+`GPUEnforcementTests.requireMetalPinsGPU` in
+`provider-swift/Tests/ProviderCoreTests/GPUEnforcementTests.swift`.
+
+The standalone resource-release test and the two periodic MTP sampler tests
+also use child processes, giving their real listener/timer tasks an executor
+separate from concurrent MLX tests. Their original deadlines, recurring-sample
+requirements and shutdown/resource assertions remain active. Each helper
+requires `ExitTest.current` so it cannot accidentally run in the parent process.
+See `standaloneServerStopAndWaitReleaseResidentBridgeAndSSDResources` in
+`provider-swift/Tests/ProviderCoreTests/StandaloneServerTests.swift` and
+`periodicSamplerEmitsForEverySlot` / `shutdownStopsSampler` in
+`provider-swift/Tests/ProviderCoreTests/MTPPostureTelemetryTests.swift`.
 
 **Nested `libs/mlx-swift-lm` suites.** The paged-KV correctness gates live in
 the submodule, not in `provider-swift/`. Build them once, stage the metallib,

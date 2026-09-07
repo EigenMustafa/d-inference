@@ -1,6 +1,6 @@
 # Storage
 
-> Last updated: 2026-09-06 · commit `8c22f0cdb`
+> Last updated: 2026-09-07 · commit `46a65e203`
 
 What the coordinator persists, through which interface, in which backend, and
 how the schema reaches a fresh database; then what a provider keeps on its own
@@ -13,6 +13,10 @@ the SSD cache file format is in
 Model versions also store the optional `hugging_face_artifact` as nullable JSONB
 (`coordinator/store/postgres.go`). `SetModelVersion` replaces it and invalidates
 the existing model read-through cache; [artifact schema](../reference/model-registry-format.md#hugging-face-download-artifact).
+
+Attempt decision fields are additive columns and existing provider JSONB;
+[prediction telemetry](../reference/prediction-decision-telemetry.md#storage-and-rollout)
+defines migration, historical NULLs and the separately applied waterfall view.
 
 ## Context
 

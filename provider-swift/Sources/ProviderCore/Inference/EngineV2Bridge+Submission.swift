@@ -465,6 +465,12 @@ extension EngineV2Bridge {
             continuation.finish()
             return stream
         }
+        profile?.beginDeadlineDecision(
+            deadline: firstContentDeadline, admission: deadlineAdmission,
+            bypassReason: deadlineAdmission == nil
+                ? deadlineProjectionBypassReason(
+                    deadline: firstContentDeadline, isMultimodal: multimodal != nil)
+                : nil)
         do {
             if let admission = deadlineAdmission {
                 // The engine's serialized closure compares projection against
@@ -476,7 +482,10 @@ extension EngineV2Bridge {
                     firstTokenDeadline: admission)
                 switch result {
                 case .admitted(let stream, let projectedWork, let admittedAt, let retirement):
+                    profile?.observeDeadlineDecision(
+                        .accepted, work: projectedWork, deadline: firstContentDeadline)
                     if Task.isCancelled || pendingCancellationIDs.contains(id) {
+                        profile?.stopDeadlineContinuation(.cancelled)
                         engine.cancel(cbv2Id)
                         // Admitted, then torn down: an in-flight engine step
                         // may already have produced a token before the cancel
@@ -500,6 +509,7 @@ extension EngineV2Bridge {
                     do {
                         try firstContentDeadline?.check()
                     } catch {
+                        profile?.stopDeadlineContinuation(.expired)
                         engine.cancel(cbv2Id)
                         // Admission committed at the deadline boundary. Keep
                         // provider-global reservations until the generation-
@@ -545,8 +555,11 @@ extension EngineV2Bridge {
                             if let remainingUs { f.set(.budgetRemainingAtAdmitUs, remainingUs) }
                         }
                     }
-                case .deadlineUnreachable:
+                case .deadlineUnreachable(let projectedWork):
+                    profile?.observeDeadlineDecision(
+                        .deadlineUnreachable, work: projectedWork, deadline: firstContentDeadline)
                     if Task.isCancelled || pendingCancellationIDs.contains(id) {
+                        profile?.stopDeadlineContinuation(.cancelled)
                         // Refused at admission after a latched cancel: nothing
                         // was generated, record the explicit 0 (see the
                         // `.admitted` teardown above).
@@ -560,6 +573,7 @@ extension EngineV2Bridge {
                 // been measured, or media makes token projection incomplete.
                 // Absolute expiry does not: it was checked immediately above.
                 events = try engine.submit(engineRequest)
+                profile?.observeDeadlineDecision(.accepted, deadline: firstContentDeadline)
                 if let profile {
                     // Evaluated AFTER the submit returned: the deadline may
                     // have expired meanwhile, hence the zero clamp.
@@ -573,6 +587,9 @@ extension EngineV2Bridge {
                 }
             }
         } catch let cancellation as CBv2FirstTokenAdmissionCancellation {
+            // This exception proves acceptance but carries no projected work.
+            profile?.observeDeadlineDecision(
+                .accepted, deadline: firstContentDeadline, continuation: .cancelled)
             engine.cancel(cbv2Id)
             // Post-admission cancellation: same rule as the `.admitted`
             // teardown above — the field stays absent.
@@ -590,6 +607,10 @@ extension EngineV2Bridge {
                 failure: .policy)
             throw CancellationError()
         } catch {
+            if error is CancellationError {
+                profile?.observeDeadlineDecision(
+                    .cancelled, deadline: firstContentDeadline, continuation: .cancelled)
+            }
             // No event pump owns rejected submissions. Release once here unless
             // a committed generation transferred ownership to retirement.
             if !retirementTransfer.isClaimed {

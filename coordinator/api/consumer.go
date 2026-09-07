@@ -1033,6 +1033,7 @@ func (s *Server) dispatchWithReserver(
 
 	requestID := uuid.New().String()
 	ap := rp.NewAttempt(requestID, attempt, backupOf)
+	s.recordPredictivePolicy(ap, policy, requiresVision)
 	ap.Mark(registry.StampAttemptStart)
 	// Any failure return closes the attempt as not dispatched (terminal half; the handler half lands in finalizeProfile);
 	// a dispatched attempt is left for the provider terminal / relay to close.
@@ -1160,6 +1161,7 @@ func (s *Server) dispatchWithReserver(
 		}
 	}
 	provider, decision, plan = reserve(pr, excludeList())
+	ap.SetReservationTTFTCeiling(pr.MaxTTFTMs)
 	ap.Mark(registry.StampReserveDone)
 	ap.SetDecision(decision)
 	if fullScan {

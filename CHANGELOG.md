@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased: prediction decisions and backup deadlines
+
+- Record the coordinator's prediction policy, reservation ceiling and encoded deadline budget alongside each provider's returned prediction and decision. Distinguish refusals from acceptance followed by expiry without changing error codes or prediction policy.
+- Refresh remaining time after registry/provider lock waits before reserving a retained backup candidate. Skip expired reservations and shrink an enabled prediction ceiling.
+
+## Unreleased - pending-prompt admission estimates
+
+- Estimate unreflected pending prefill from each request's own prompt size, excluding requests that already produced content. Preserve the existing proxy for unknown cache work and reflected queues, so short and long arrivals no longer inherit each other's prompt lengths when the heartbeat is idle.
+
 ## Unreleased — stats request-flow refresh
 
 - Restore Stats refreshes on large usage windows by aggregating request origins before looking up provider locations. Preserve weighted coordinates, request/token counts, and the top-50 flow limit while avoiding large temporary sorts.

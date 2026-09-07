@@ -1,6 +1,6 @@
 # HTTP API contracts
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-07 · commit `14ffb2114`
 
 The complete public HTTP surface of the coordinator, derived from the 107 `HandleFunc` registrations in `routes()` (`coordinator/api/server.go`), including the `/v1/` catch-all. Every route is listed once below with its handler symbol, authentication requirement, and rate-limit bucket; the second half of the page gives the wire shapes, headers, error table, SSE framing, limits, timeouts, and version-gate semantics that those routes share. For *why* the pipeline is built this way see [`../architecture/components/consumer.md`](../architecture/components/consumer.md); for the crypto model behind sealed transport see [`../architecture/security/encryption.md`](../architecture/security/encryption.md).
 
@@ -142,7 +142,7 @@ Ledger semantics, reservations and payouts: [`../architecture/billing.md`](../ar
 | POST | `/v1/invite/redeem` | `handleRedeemInviteCode` (`coordinator/api/invite_handlers.go`) | `key` | `fin` | Redeem an invite code |
 | GET | `/v1/providers/attestation` | `handleProviderAttestation` (`coordinator/api/provider.go`) | `—` | — | Public attestation roster; see [`../architecture/security/attestation.md`](../architecture/security/attestation.md) |
 
-### Referral program payloads
+### Open Sales Program payloads
 
 All routes resolve the caller's account; they do not accept an account ID from
 the body. Register and apply require Privy authentication. Read routes accept

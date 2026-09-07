@@ -1,6 +1,6 @@
 # Design records — what was decided, and whether it shipped
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-07 · commit `14ffb2114`
 
 Plans, proposals, and architecture decision records. Each file is frozen at the
 moment it was written except for its **Status** line, which says whether the
@@ -51,9 +51,9 @@ below repeats the vocabulary word only; the file's line 5 carries the evidence.
 
 | Record | Status | Date | One line |
 |---|---|---|---|
-| [consumer-referrals.md](consumer-referrals.md) | In progress | 2026-09-07 | Recurring consumer referral rewards funded by Darkbloom, with atomic settlement and a console sharing flow |
+| [consumer-referrals.md](consumer-referrals.md) | In progress | 2026-09-07 | Open Sales Program: recurring consumer referral rewards, atomic settlement, and sharing |
 | [base-rewards.md](base-rewards.md) | Implemented | 2026-06-06 | Additive base income for providers; as built in [`../architecture/billing.md`](../architecture/billing.md) |
-| [provider-referral-growth-program.md](provider-referral-growth-program.md) | Proposed | 2026-08-21 | Provider-acquisition referral rewards plus an interim payout share, independent of the consumer referral program |
+| [provider-referral-growth-program.md](provider-referral-growth-program.md) | Proposed | 2026-08-21 | Provider-acquisition referral rewards plus an interim payout share, independent of the Open Sales Program |
 
 ## Adding a record
 

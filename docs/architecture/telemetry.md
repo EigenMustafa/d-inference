@@ -1,6 +1,6 @@
 # Telemetry
 
-> Last updated: 2026-09-04 · commit `a50f61560`
+> Last updated: 2026-09-07 · commit `53646bc9b`
 
 How operational data leaves a provider, what the coordinator does with it, and
 why nothing on that path can carry a prompt or slow a request. The heartbeat is
@@ -8,6 +8,11 @@ the diagnostic channel; Datadog is the sink; the coordinator is the only
 process that emits telemetry *events*. The field-by-field catalogue is in
 [`../reference/telemetry-inventory.md`](../reference/telemetry-inventory.md)
 and the event contract in [`../reference/telemetry-schema.md`](../reference/telemetry-schema.md).
+
+Per-attempt prediction/refusal evidence travels on existing terminal profiles
+to PostgreSQL, separately from telemetry events. Its
+[field reference](../reference/prediction-decision-telemetry.md) describes the
+closed values, timing boundaries and rollout.
 
 ## Context
 

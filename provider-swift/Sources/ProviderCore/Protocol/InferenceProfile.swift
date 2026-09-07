@@ -250,6 +250,7 @@ public struct InferenceProfile: Codable, Sendable, Equatable {
 
     // Engine sub-object (slice 3)
     public var engine: EngineProfile?
+    public var deadlineDecision: DeadlineDecisionProfile?
 
     enum CodingKeys: String, CodingKey {
         case schema
@@ -308,6 +309,7 @@ public struct InferenceProfile: Codable, Sendable, Equatable {
         case thermalState = "thermal_state"
         case cancelStage = "cancel_stage"
         case engine
+        case deadlineDecision = "deadline_decision"
     }
 
     public init(schema: Int? = InferenceProfile.currentSchema, wallMs: Int64? = nil) {
@@ -381,6 +383,7 @@ public struct InferenceProfile: Codable, Sendable, Equatable {
         p.mlxActiveBytesAtFinish = b(p.mlxActiveBytesAtFinish)
         p.mlxPeakBytes = b(p.mlxPeakBytes)
         p.engine = p.engine?.saturatedToWireRanges()
+        p.deadlineDecision = p.deadlineDecision?.saturatedToWireRanges()
         return p
     }
 }

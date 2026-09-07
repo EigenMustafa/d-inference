@@ -87,6 +87,10 @@ func providerInferenceFrameBuilder(
 ) registry.TextFrameBuilder {
 	snapshot := snapshotProviderInferenceFrame(
 		requestID, ephemeralPublicKey, ciphertext, pr)
+	var profile *registry.AttemptProfile
+	if pr != nil {
+		profile = pr.Profile
+	}
 	return func(dequeuedAt time.Time) ([]byte, error) {
 		firstContentBudgetMS := snapshot.firstContentBudgetMS
 		if !snapshot.firstContentDeadline.IsZero() {
@@ -103,6 +107,7 @@ func providerInferenceFrameBuilder(
 		if err != nil {
 			return nil, err
 		}
+		profile.RecordDispatchBudget(firstContentBudgetMS)
 		return data, nil
 	}
 }

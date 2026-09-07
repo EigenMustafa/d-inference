@@ -944,6 +944,12 @@ public actor EngineV2Bridge {
             continuation.finish()
             return stream
         }
+        profile?.beginDeadlineDecision(
+            deadline: firstContentDeadline, admission: deadlineAdmission,
+            bypassReason: deadlineAdmission == nil
+                ? deadlineProjectionBypassReason(
+                    deadline: firstContentDeadline, isMultimodal: multimodal != nil)
+                : nil)
         do {
             if let admission = deadlineAdmission {
                 // The engine's serialized closure compares projection against
@@ -955,7 +961,10 @@ public actor EngineV2Bridge {
                     firstTokenDeadline: admission)
                 switch result {
                 case .admitted(let stream, let projectedWork, let admittedAt, let retirement):
+                    profile?.observeDeadlineDecision(
+                        .accepted, work: projectedWork, deadline: firstContentDeadline)
                     if Task.isCancelled || pendingCancellationIDs.contains(id) {
+                        profile?.stopDeadlineContinuation(.cancelled)
                         engine.cancel(cbv2Id)
                         // Admitted, then torn down: an in-flight engine step
                         // may already have produced a token before the cancel
@@ -979,6 +988,7 @@ public actor EngineV2Bridge {
                     do {
                         try firstContentDeadline?.check()
                     } catch {
+                        profile?.stopDeadlineContinuation(.expired)
                         engine.cancel(cbv2Id)
                         // Admission committed at the deadline boundary. Keep
                         // provider-global reservations until the generation-
@@ -1025,8 +1035,11 @@ public actor EngineV2Bridge {
                             if let remainingUs { f.set(.budgetRemainingAtAdmitUs, remainingUs) }
                         }
                     }
-                case .deadlineUnreachable:
+                case .deadlineUnreachable(let projectedWork):
+                    profile?.observeDeadlineDecision(
+                        .deadlineUnreachable, work: projectedWork, deadline: firstContentDeadline)
                     if Task.isCancelled || pendingCancellationIDs.contains(id) {
+                        profile?.stopDeadlineContinuation(.cancelled)
                         // Refused at admission after a latched cancel: nothing
                         // was generated, record the explicit 0 (see the
                         // `.admitted` teardown above).
@@ -1040,6 +1053,7 @@ public actor EngineV2Bridge {
                 // been measured, or media makes token projection incomplete.
                 // Absolute expiry does not: it was checked immediately above.
                 events = try engine.submit(engineRequest)
+                profile?.observeDeadlineDecision(.accepted, deadline: firstContentDeadline)
                 if let profile {
                     // Evaluated AFTER the submit returned: the deadline may
                     // have expired meanwhile, hence the zero clamp.
@@ -1053,6 +1067,9 @@ public actor EngineV2Bridge {
                 }
             }
         } catch let cancellation as CBv2FirstTokenAdmissionCancellation {
+            // This exception proves acceptance but carries no projected work.
+            profile?.observeDeadlineDecision(
+                .accepted, deadline: firstContentDeadline, continuation: .cancelled)
             engine.cancel(cbv2Id)
             // Post-admission cancellation: same rule as the `.admitted`
             // teardown above — the field stays absent.
@@ -1082,6 +1099,8 @@ public actor EngineV2Bridge {
             }
             throw failure
         } catch is CancellationError {
+            profile?.observeDeadlineDecision(
+                .cancelled, deadline: firstContentDeadline, continuation: .cancelled)
             if !retirementTransfer.isClaimed {
                 await releasePreSubmitResources(
                     requestID: id,
@@ -1293,6 +1312,7 @@ public actor EngineV2Bridge {
         usageSignal: EngineV2RequestUsageSignal?
     ) async throws {
         if pendingCancellationIDs.contains(requestID) {
+            pendingProfiles[requestID]?.observeDeadlineDecision(.cancelled, deadline: deadline)
             // Refused before the engine ever sees the row: nothing was
             // generated after the cancel, so the profile records an explicit
             // `tokens_after_cancel = 0` (baseline seeded by `latchPendingCancel`).
@@ -1310,6 +1330,8 @@ public actor EngineV2Bridge {
         do {
             try deadline?.check()
         } catch let failure as PreContentDeadlineFailure {
+            pendingProfiles[requestID]?.observeDeadlineDecision(
+                .expiredBeforeSubmit, deadline: deadline)
             await releasePreSubmitResources(
                 requestID: requestID,
                 sharedKVReserved: sharedKVReserved,

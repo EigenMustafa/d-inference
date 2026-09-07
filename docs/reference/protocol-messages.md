@@ -1,6 +1,6 @@
 # Provider ↔ coordinator protocol messages
 
-> Last updated: 2026-09-04 · commit `aa87a0ebd`
+> Last updated: 2026-09-07 · commit `53646bc9b`
 
 Every JSON frame on the provider WebSocket (`GET /ws/provider`), with the Go
 type, the Swift type, and the presence rule for each field. Go is the canon
@@ -14,6 +14,10 @@ Conventions: **req** = always present; **opt** = Go `omitempty`, Swift
 row says otherwise); **ptr** = Go pointer with `omitempty`, so absent ≠ zero.
 JSON keys are snake_case and identical in the Go tags and the Swift
 `CodingKeys`.
+
+Terminal `profile` objects can include optional schema-1
+[`deadline_decision`](prediction-decision-telemetry.md#provider-fields).
+This does not add a message type or change the public error code.
 
 ## Envelope and the single-parse rule
 

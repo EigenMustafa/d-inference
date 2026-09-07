@@ -1,6 +1,6 @@
 # Telemetry event schema
 
-> Last updated: 2026-09-03 · commit `5d400cf75`
+> Last updated: 2026-09-07 · commit `53646bc9b`
 
 The shape of a telemetry *event* as it exists in three mirrors (Go, Swift,
 TypeScript), the closed enums it carries, the field allowlist, and the tests
@@ -12,6 +12,10 @@ the body — but the allowlist still governs what the Swift and console filters
 let through and what the coordinator emits about itself. What each live datum
 is and where it goes: [`telemetry-inventory.md`](telemetry-inventory.md);
 design and failure modes: [`../architecture/telemetry.md`](../architecture/telemetry.md).
+
+The terminal-profile [prediction decision fields](prediction-decision-telemetry.md)
+use the separate Go/Swift profiler protocol, not this event allowlist or its
+TypeScript mirror.
 
 ## Mirrors
 

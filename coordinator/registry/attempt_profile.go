@@ -62,21 +62,25 @@ type AttemptProfile struct {
 	DecisionSet bool
 
 	// mu guards everything below (written by the read loop / settlement path).
-	mu                  sync.Mutex
-	finalStatus         string
-	errorReason         string
-	terminalCause       string
-	providerOutcome     string
-	clientOutcome       string
-	providerProfileRaw  []byte // bounded (≤ maxProviderProfileBytes) raw wire object; decoded off the hot path
-	providerProfileLate bool   // a profile arrived after finalize
-	providerProfileStat ProviderProfileStatus
-	terminalRecorded    bool
-	terminalClaimed     bool
-	handlerDone         bool
-	terminalPrompt      int
-	terminalCompletion  int
-	terminalUsageSet    bool
+	mu                       sync.Mutex
+	predictiveMode           string
+	predictiveBypass         PredictiveBypass
+	reservationTTFTCeilingMs *float64
+	dispatchBudgetMs         *int64
+	finalStatus              string
+	errorReason              string
+	terminalCause            string
+	providerOutcome          string
+	clientOutcome            string
+	providerProfileRaw       []byte // bounded (≤ maxProviderProfileBytes) raw wire object; decoded off the hot path
+	providerProfileLate      bool   // a profile arrived after finalize
+	providerProfileStat      ProviderProfileStatus
+	terminalRecorded         bool
+	terminalClaimed          bool
+	handlerDone              bool
+	terminalPrompt           int
+	terminalCompletion       int
+	terminalUsageSet         bool
 
 	parts    atomic.Int32
 	once     sync.Once

@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-06 · commit `bbf6f83d4`
+> Last updated: 2026-09-07 · commit `53646bc9b`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -44,6 +44,17 @@ make test   # coordinator-test prompt-sidecar-test provider-test ui-test benchma
 ```
 
 ### 2. Coordinator (Go)
+
+Run prediction telemetry checks from the repository root:
+
+```bash
+go test -race ./coordinator/api ./coordinator/registry ./coordinator/protocol ./coordinator/store
+```
+
+API fixtures use isolated encrypted WebSocket providers;
+Postgres tests require an explicitly disposable `DATABASE_URL` and include an
+upgrade from the old profile schema. See
+[prediction telemetry](../reference/prediction-decision-telemetry.md).
 
 The [admission calibration baseline](../reports/2026-09-06-admission-calibration-baseline.md)
 gives the focused `TestTTFTPendingPrompt` comparison command. Its registry

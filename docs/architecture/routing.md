@@ -1,6 +1,6 @@
 # Routing: how a request becomes a provider choice
 
-> Last updated: 2026-09-06 · commit `bbf6f83d4`
+> Last updated: 2026-09-07 · commit `53646bc9b`
 
 Routing is the part of the coordinator that, given one inference request and
 the live fleet, picks the provider that should run it. It filters the fleet
@@ -55,7 +55,14 @@ alternates. The API layer (`coordinator/api/dispatch.go`) consumes the plan:
 it dispatches to the winner, may probe alternates for capacity quotes
 (`capacityProbeWindow = 250 * time.Millisecond`,
 `dispatchPlanProbeFanout = 8`, `coordinator/api/dispatch_plan_wiring.go`) and
-falls through the plan on retry or hedge.
+falls through the plan on retry or hedge. `ReserveNextFromPlan`
+(`coordinator/registry/dispatch_plan.go`) refreshes remaining time after both
+registry and provider locks are acquired, before evaluating and debiting an
+alternate. An expired request does not reserve a candidate; an enabled
+prediction ceiling shrinks with remaining time, while a disabled ceiling stays
+zero. The writer independently checks expiry before constructing the envelope.
+Recorded policy and deadline values are defined in the
+[prediction telemetry reference](../reference/prediction-decision-telemetry.md).
 
 The same gate chain is reused by the preflight admission check
 (`PredictServable`, `coordinator/registry/servability.go`) and by the queue

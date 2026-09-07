@@ -63,8 +63,8 @@ func (s *Server) codeAttestMetric(outcome string) {
 // Providers with no APNs device token (legacy <0.6.0, or headless boxes with no
 // GUI session) can never attest, so the loop exits immediately — they are derouted
 // once enforcement begins, the intended "everyone must update" outcome.
-// tryCrossVersionReuse may change release metadata only while the ORIGINAL
-// process key survives. A new key always needs a new Apple/APNs bootstrap.
+// tryCrossVersionReuse requires the original process key in enforce mode.
+// Shadow preserves the baseline transition behavior for rollout comparison.
 func (s *Server) tryCrossVersionReuse(
 	ctx context.Context,
 	providerID string,
@@ -86,7 +86,7 @@ func (s *Server) tryCrossVersionReuse(
 	if nodeKey == "" || evidence.ProcessPublicKey != nodeKey {
 		return false
 	}
-	if !s.codeAttestThrottle.reuseProcessIdentity(evidence.SEPublicKey, evidence.APNsToken, nodeKey) {
+	if s.processPostureEnforced() && !s.codeAttestThrottle.reuseProcessIdentity(evidence.SEPublicKey, evidence.APNsToken, nodeKey) {
 		return false
 	}
 	cachedBinaryHash, ok := s.codeAttestThrottle.reuseAttestationForTransition(

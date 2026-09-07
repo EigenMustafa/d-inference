@@ -40,8 +40,8 @@ func (p *Provider) ProcessPostureReady() (udid string, fresh bool, ok bool) {
 	return p.processPostureReadyLocked()
 }
 
-// RequireProcessPosture is armed for every network registration, including open
-// mode and self-routing. Direct registry fixtures need not construct Apple PKI.
+// RequireProcessPosture is armed for network registrations when the API policy
+// enforces, including open mode and self-routing. Shadow does not arm this gate.
 func (p *Provider) RequireProcessPosture() {
 	p.mu.Lock()
 	p.requireProcessPosture = true

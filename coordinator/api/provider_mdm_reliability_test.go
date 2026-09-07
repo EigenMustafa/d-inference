@@ -38,6 +38,7 @@ type fakeMDMServer struct {
 	failMDARawCommand bool
 
 	mdaCommandUUID string
+	mdaCommandBody string
 
 	// failSecurityInfoCommand makes POST /v1/commands (the SecurityInfo enqueue)
 	// return a 500 so mdm.SendSecurityInfoCommand errors — simulating a transient
@@ -116,6 +117,7 @@ func (f *fakeMDMServer) handler() http.Handler {
 		f.mu.Lock()
 		fail := f.failMDARawCommand
 		f.mdaCommandUUID = commandUUID
+		f.mdaCommandBody = string(body)
 		f.mu.Unlock()
 		if fail {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -202,12 +204,16 @@ func deviceAttestationWebhook(udid, commandUUID string, certChain ...[]byte) []b
 // registers one provider holding a valid attestation result (serial + SIP +
 // SecureBoot + SE public key), at self_signed trust. It returns the server, the
 // fake, and the live *registry.Provider.
-func mdmReliabilityServer(t *testing.T, fake *fakeMDMServer) (*Server, *registry.Provider) {
+func mdmReliabilityServer(t *testing.T, fake *fakeMDMServer, configs ...ServerConfig) (*Server, *registry.Provider) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	st := store.NewMemory(store.Config{AdminKey: "test-key"})
 	reg := registry.New(logger)
-	srv := NewServer(reg, st, ServerConfig{}, logger)
+	cfg := ServerConfig{}
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+	srv := NewServer(reg, st, cfg, logger)
 	t.Cleanup(srv.Close)
 
 	ts := httptest.NewServer(fake.handler())

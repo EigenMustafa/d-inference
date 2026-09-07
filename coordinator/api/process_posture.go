@@ -13,8 +13,21 @@ const processPosturePending = "awaiting Apple posture verification for this prov
 // chain verification happens first; the registry atomically binds the result to
 // the live process. Neither MDM SecurityInfo nor signed provider fields grant.
 func (s *Server) installProcessPosture(provider *registry.Provider, ar attestation.VerificationResult, udid string, chain [][]byte, fresh bool) bool {
+	if !s.processPostureEnforced() {
+		s.observeProcessPosture(provider, ar, udid, chain, fresh, "proof_install")
+		return false
+	}
 	proof, err := attestation.VerifyMDADeviceAttestation(chain)
 	if err != nil || proof == nil || !proof.Valid {
+		return false
+	}
+	return s.installVerifiedProcessPosture(provider, ar, udid, chain, proof, fresh)
+}
+
+// installVerifiedProcessPosture is only called after Apple chain validation.
+// Separating verification lets late callbacks recheck ownership after crypto.
+func (s *Server) installVerifiedProcessPosture(provider *registry.Provider, ar attestation.VerificationResult, udid string, chain [][]byte, proof *attestation.MDAResult, fresh bool) bool {
+	if !s.processPostureEnforced() || proof == nil || !proof.Valid {
 		return false
 	}
 	provider.Mu().Lock()
@@ -43,6 +56,9 @@ func (s *Server) installProcessPosture(provider *registry.Provider, ar attestati
 }
 
 func (s *Server) completeProcessHardwareTrust(provider *registry.Provider) bool {
+	if !s.processPostureEnforced() {
+		return false
+	}
 	udid, fresh, ok := provider.ProcessPostureReady()
 	if !ok {
 		return false
@@ -70,6 +86,12 @@ func (s *Server) completeProcessHardwareTrust(provider *registry.Provider) bool 
 // MDM work until this point avoids a herd during coordinator restarts: surviving
 // processes finish entirely over the WebSocket using their original key.
 func (s *Server) processCodeProofSettled(providerID string, provider *registry.Provider) {
+	if !s.processPostureEnforced() {
+		if ar := provider.GetAttestationResult(); ar != nil {
+			s.observeProcessPosture(provider, *ar, "", provider.StagedMDAChain(), false, "code_proof")
+		}
+		return
+	}
 	resumed := s.completeProcessHardwareTrust(provider)
 	if !resumed {
 		if ar := provider.GetAttestationResult(); ar != nil {

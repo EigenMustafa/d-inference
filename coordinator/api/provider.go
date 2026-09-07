@@ -400,7 +400,9 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 				return
 			}
 			provider = s.registry.Register(providerID, conn, regMsg)
-			provider.RequireProcessPosture()
+			if s.processPostureEnforced() {
+				provider.RequireProcessPosture()
+			}
 			s.attachProviderLocation(providerID, provider, r)
 			s.verifyProviderAttestation(providerID, provider, regMsg)
 
@@ -1622,9 +1624,14 @@ func (s *Server) verifyChallengeResponse(providerID string, provider *registry.P
 	provider.Mu().Unlock()
 
 	if trustLevel == registry.TrustSelfSigned {
-		// Resume only after the encrypted challenge proves possession of the
-		// process key bound to a valid Apple posture certificate.
+		// Enforce requires exact process continuity. Shadow retains baseline
+		// reuse while recording the independent posture evaluation.
 		if s.tryTrustReuseFastSkip(providerID, provider, resp, statusFieldsTrusted, releaseFact) {
+			if !s.processPostureEnforced() {
+				if ar := provider.GetAttestationResult(); ar != nil {
+					s.attachCachedMDAProof(providerID, provider, *ar)
+				}
+			}
 			if s.mdmScheduler != nil {
 				s.mdmScheduler.ChallengeSettled(provider, true)
 			}
@@ -1643,7 +1650,7 @@ func (s *Server) verifyChallengeResponse(providerID string, provider *registry.P
 			// inside the 120s dispatch-queue deadline, not on the refresh
 			// spread. Durable due time, priority, and retry stage then decide
 			// when SecurityInfo runs.
-			if s.mdmScheduler != nil && provider.GetFreshCodeAttested() {
+			if s.mdmScheduler != nil && (!s.processPostureEnforced() || provider.GetFreshCodeAttested()) {
 				s.mdmScheduler.PromoteFailedFastSkip(provider)
 				s.mdmScheduler.ChallengeSettled(provider, false)
 			}
@@ -3344,10 +3351,17 @@ func (s *Server) verifyProviderViaMDM(ctx context.Context, providerID string, pr
 	if provider.ChallengeShouldStop() {
 		return mdmVerifyTransient
 	}
-	// SecurityInfo comes from the OS under test; only Apple's process-bound
-	// posture certificate may promote hardware trust.
-	provider.SetMDMFailureReason("apple-posture-pending")
-	s.sendTrustStatus(provider, registry.TrustSelfSigned, "online", processPosturePending)
+	if !s.processPostureEnforced() {
+		s.observeProcessPosture(provider, attestResult, mdmResult.UDID, provider.StagedMDAChain(), false, "security_info")
+		if !s.legacyGrantSecurityInfo(provider, attestResult, mdmResult.UDID, false) {
+			return mdmVerifyTransient
+		}
+	} else {
+		// SecurityInfo comes from the OS under test; only Apple's process-bound
+		// posture certificate may promote hardware trust.
+		provider.SetMDMFailureReason("apple-posture-pending")
+		s.sendTrustStatus(provider, registry.TrustSelfSigned, "online", processPosturePending)
+	}
 
 	// Direct attempt-level callers retain the historical synchronous MDA behavior.
 	// Scheduler workers enqueue MDA behind the same global budget instead.
@@ -3386,8 +3400,15 @@ func (s *Server) ApplyLateSecurityInfo(
 		)
 		return
 	}
-	binding.provider.SetMDMFailureReason("apple-posture-pending")
-	s.sendTrustStatus(binding.provider, registry.TrustSelfSigned, "online", processPosturePending)
+	if !s.processPostureEnforced() {
+		s.observeProcessPosture(binding.provider, binding.attestation, udid, binding.provider.StagedMDAChain(), false, "late_security_info")
+		if !s.legacyGrantSecurityInfo(binding.provider, binding.attestation, udid, true) {
+			return
+		}
+	} else {
+		binding.provider.SetMDMFailureReason("apple-posture-pending")
+		s.sendTrustStatus(binding.provider, registry.TrustSelfSigned, "online", processPosturePending)
+	}
 	s.mdmScheduler.CompleteLateSecurityInfo(
 		*binding, udid, commandUUID,
 	)
@@ -3419,9 +3440,13 @@ func (s *Server) stageDurableMDAChain(provider *registry.Provider, serial string
 	provider.StageMDAChainFromJSON(chain)
 }
 
-// attachCachedMDAProof resumes a certificate only after proving possession of
-// the original memory-only encryption key. Legacy SE-only certificates fail.
+// attachCachedMDAProof selects strict process resumption or baseline cache
+// compatibility according to the immutable server policy mode.
 func (s *Server) attachCachedMDAProof(providerID string, provider *registry.Provider, ar attestation.VerificationResult) bool {
+	if !s.processPostureEnforced() {
+		s.observeProcessPosture(provider, ar, "", provider.StagedMDAChain(), false, "cached_mda")
+		return s.legacyAttachCachedMDAProof(providerID, provider, ar)
+	}
 	if !provider.GetFreshCodeAttested() {
 		return false
 	}
@@ -3435,6 +3460,10 @@ func (s *Server) attachCachedMDAProof(providerID string, provider *registry.Prov
 // verifyAppleDeviceAttestation sends a DeviceInformation command requesting
 // DevicePropertiesAttestation and verifies the Apple-signed certificate chain.
 func (s *Server) verifyAppleDeviceAttestation(ctx context.Context, providerID string, provider *registry.Provider, attestResult attestation.VerificationResult, udid string) {
+	if !s.processPostureEnforced() {
+		s.legacyVerifyAppleDeviceAttestation(ctx, providerID, provider, attestResult, udid)
+		return
+	}
 	setOutcome := func(outcome string) {
 		if metadata, ok := ctx.Value(mdmSchedulerAttemptContextKey{}).(*mdmSchedulerAttemptMetadata); ok {
 			metadata.mdaOutcome = outcome

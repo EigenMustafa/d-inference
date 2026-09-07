@@ -67,6 +67,7 @@ type codeAttestPushBudgetStore interface {
 //     (within budget) instead of being pinned to the 20-minute background budget,
 //     and jitter de-synchronises fleet-wide reconnects (e.g. post-deploy).
 type codeAttestThrottle struct {
+	legacyReuse            bool // fixed at server construction; preserves baseline cache policy in shadow
 	mu                     sync.Mutex
 	attested               map[string]codeAttestRecord          // seKey -> last successful attestation (reuse cache)
 	lastPush               map[string]time.Time                 // seKey -> last push (device-level rate limit)
@@ -214,7 +215,15 @@ func (t *codeAttestThrottle) reuseAttestation(
 		r.version == version &&
 		r.token == token &&
 		r.nodeKey == nodeKey &&
-		!r.at.After(t.now().Add(clockSkewTolerance))
+		t.reusableProcessTime(r.at, t.now())
+}
+
+// reusableProcessTime keeps the legacy cache age policy confined to shadow.
+func (t *codeAttestThrottle) reusableProcessTime(at, now time.Time) bool {
+	if t.legacyReuse {
+		return now.Sub(at) < t.reuseWindow
+	}
+	return !at.After(now.Add(clockSkewTolerance))
 }
 
 // reuseProcessIdentity permits metadata transitions only for the exact key
@@ -665,8 +674,8 @@ func (t *codeAttestThrottle) seed(rows []store.CodeAttestation) int {
 		if r.SEPubKey == "" {
 			continue
 		}
-		if r.AttestedAt.After(now.Add(clockSkewTolerance)) {
-			continue // corrupt/future evidence never resumes
+		if !t.reusableProcessTime(r.AttestedAt, now) {
+			continue // honor the active mode before durable cache rows are seeded
 		}
 		if cur, ok := t.attested[r.SEPubKey]; ok && !r.AttestedAt.After(cur.at) {
 			continue // keep the fresher in-memory record

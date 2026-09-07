@@ -14,10 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Legacy timing metadata is retained for scheduler priority and diagnostics.
-// These windows NEVER authorize hardware trust. Reboot duration is not a
-// security boundary; tryTrustReuseFastSkip requires an Apple certificate bound
-// to the exact memory-only process key and a live possession proof.
+// Timing metadata is retained for scheduling and the shadow compatibility path.
+// Enforced process posture never uses these windows to authorize hardware trust.
 const defaultTrustReuseWindow = 5 * time.Minute
 const defaultTrustReuseReconnectGap = 90 * time.Second
 const maxTrustReuseReconnectGap = 120 * time.Second
@@ -121,8 +119,8 @@ func newTrustReuseCache() *trustReuseCache {
 	return newTrustReuseCacheWithWindow(trustReuseWindowFromEnv())
 }
 
-// newTrustReuseCacheWithWindow pins the legacy scheduler-priority window.
-// No value of this window can authorize a hardware grant.
+// newTrustReuseCacheWithWindow pins the legacy scheduling/reuse window.
+// Enforced process posture does not use this value for authorization.
 func newTrustReuseCacheWithWindow(window time.Duration) *trustReuseCache {
 	if window <= 0 {
 		window = defaultTrustReuseWindow
@@ -147,8 +145,8 @@ func trustReuseWindowFromEnv() time.Duration {
 	return defaultTrustReuseWindow
 }
 
-// trustReuseReconnectGapFromEnv preserves the bounded legacy scheduling knob.
-// Its value is never evidence that a provider avoided a reboot.
+// trustReuseReconnectGapFromEnv preserves the bounded legacy timing knob.
+// It applies to scheduling and the shadow compatibility path only.
 func trustReuseReconnectGapFromEnv() (time.Duration, bool) {
 	gap := defaultTrustReuseReconnectGap
 	if v := os.Getenv("EIGENINFERENCE_TRUST_REUSE_RECONNECT_GAP"); v != "" {
@@ -165,8 +163,8 @@ func trustReuseReconnectGapFromEnv() (time.Duration, bool) {
 	return gap, false
 }
 
-// decideTrustReuse classifies historical cache metadata for diagnostics/tests.
-// It is not an authorization decision; live grants use process_posture.go.
+// decideTrustReuse classifies historical cache metadata for diagnostics and
+// shadow compatibility. Enforced grants use process_posture.go.
 func (c *trustReuseCache) decideTrustReuse(input trustReuseInput) trustReuseResult {
 	if input.SEPubKey == "" || input.Serial == "" || input.FreshBinaryHash == "" {
 		return trustReuseResult{Reason: trustReuseReasonMissingIdentity}
@@ -738,7 +736,7 @@ func (s *Server) recordTrustReuseAtGeneration(provider *registry.Provider, seKey
 		seKey == "" || serial == "" {
 		return false
 	}
-	if !allowRecovery && s.trustReuseCache.isRevoked(seKey) {
+	if s.processPostureEnforced() && !allowRecovery && s.trustReuseCache.isRevoked(seKey) {
 		return false
 	}
 	if blocked, _ := s.trustSafetyStatus(); blocked || s.trustReuseIdentityPending(seKey) {
@@ -1064,10 +1062,17 @@ func (s *Server) trustReuseMetric(decision trustReuseDecision, reason trustReuse
 	}
 }
 
-// tryTrustReuseFastSkip resumes only an Apple posture certificate bound to the
-// current memory-only process key, after a live exact-key possession proof.
-// Cached timestamps, a persistent SE signature and release hashes never grant.
+// tryTrustReuseFastSkip uses process posture in enforce mode. Shadow observes
+// that policy separately while retaining the baseline trust-reuse decision.
 func (s *Server) tryTrustReuseFastSkip(providerID string, provider *registry.Provider, resp *protocol.AttestationResponseMessage, statusFieldsTrusted bool, facts ...approvedReleaseTransitionFact) bool {
+	if s != nil && !s.processPostureEnforced() {
+		if provider != nil {
+			if ar := provider.GetAttestationResult(); ar != nil {
+				s.observeProcessPosture(provider, *ar, "", provider.StagedMDAChain(), false, "trust_reuse")
+			}
+		}
+		return s.legacyTryTrustReuseFastSkip(providerID, provider, resp, statusFieldsTrusted, facts...)
+	}
 	if s == nil || provider == nil || resp == nil || !statusFieldsTrusted ||
 		!provider.GetFreshCodeAttested() {
 		return false
@@ -1079,8 +1084,8 @@ func (s *Server) tryTrustReuseFastSkip(providerID string, provider *registry.Pro
 	return s.attachCachedMDAProof(providerID, provider, *ar)
 }
 
-// --- Historical connection coverage, used only for scheduling/diagnostics ---
-// Hardware authorization does not depend on these timestamps or offline gaps.
+// --- Historical connection coverage for scheduling and shadow compatibility ---
+// Enforced hardware authorization does not depend on these timestamps.
 const trustCoverageWriteInterval = 30 * time.Second
 
 // markTrustCoverage registers seKey as covered by providerID's live

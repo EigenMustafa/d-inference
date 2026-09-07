@@ -267,6 +267,18 @@ func (s *mdmVerificationScheduler) applyLateMDA(
 	attemptCancel := job.attemptCancel
 	s.mu.Unlock()
 
+	// Verification and observation can take time; recheck callback ownership
+	// afterward so a replacement connection cannot inherit this completion.
+	proof, err := s.deps.verifyMDA(certChain)
+	if !s.server.processPostureEnforced() {
+		s.server.observeProcessPosture(bound.provider, bound.attestation, udid, certChain, true, "late_mda")
+		if err != nil || !s.server.legacyValidateLateMDA(bound.attestation, udid, proof) {
+			return true
+		}
+	} else if err != nil || proof == nil || !proof.Valid {
+		return true
+	}
+
 	s.mu.Lock()
 	currentJob := s.jobs[key]
 	currentBinding := s.bindings[seKey]
@@ -286,7 +298,13 @@ func (s *mdmVerificationScheduler) applyLateMDA(
 	if !stillCurrent {
 		return true
 	}
-	if !s.server.installProcessPosture(bound.provider, bound.attestation, udid, certChain, true) {
+	installed := false
+	if s.server.processPostureEnforced() {
+		installed = s.server.installVerifiedProcessPosture(bound.provider, bound.attestation, udid, certChain, proof, true)
+	} else {
+		installed = bound.provider.SetMDAProofIfHardwareBound(certChain, proof, true)
+	}
+	if !installed {
 		return true
 	}
 

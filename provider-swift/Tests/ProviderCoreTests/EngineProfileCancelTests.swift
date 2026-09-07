@@ -21,6 +21,10 @@ private final class ControlledEngine: CBv2Engine, @unchecked Sendable {
     private var deadlineGate: AsyncGate?
     private var deadlineVerdict: DeadlineVerdict = .admitted
     private var deadlineSubmitEntered = false
+    private var returnAcceptedAfterDeadline = false
+    private var acceptedReturnTiming: (
+        admittedAt: ContinuousClock.Instant, returnedAt: ContinuousClock.Instant
+    )?
     private var projectedWork: CBv2FirstTokenProjectedWork = .unbounded
 
     func setProjectedWork(_ work: CBv2FirstTokenProjectedWork) {
@@ -29,22 +33,32 @@ private final class ControlledEngine: CBv2Engine, @unchecked Sendable {
 
     /// Arm the atomic deadline submit: it parks on `gate` (the bridge actor
     /// is suspended meanwhile) and then returns `verdict`.
-    func armDeadlineSubmit(gate: AsyncGate, verdict: DeadlineVerdict) {
+    func armDeadlineSubmit(
+        gate: AsyncGate, verdict: DeadlineVerdict, returnAcceptedAfterDeadline: Bool = false
+    ) {
         lock.withLock {
             deadlineGate = gate
             deadlineVerdict = verdict
             deadlineSubmitEntered = false
+            self.returnAcceptedAfterDeadline = returnAcceptedAfterDeadline
+            acceptedReturnTiming = nil
         }
     }
 
     var enteredDeadlineSubmit: Bool { lock.withLock { deadlineSubmitEntered } }
 
+    var deadlineReturnTiming: (
+        admittedAt: ContinuousClock.Instant, returnedAt: ContinuousClock.Instant
+    )? {
+        lock.withLock { acceptedReturnTiming }
+    }
+
     func submit(
         _ request: CBv2Request, firstTokenDeadline: CBv2FirstTokenDeadlineAdmission
     ) async throws -> CBv2FirstTokenDeadlineResult {
-        let (gate, verdict) = lock.withLock {
+        let (gate, verdict, delayAcceptedReturn) = lock.withLock {
             deadlineSubmitEntered = true
-            return (deadlineGate, deadlineVerdict)
+            return (deadlineGate, deadlineVerdict, returnAcceptedAfterDeadline)
         }
         // Model an engine-queue commit followed by a delayed bridge resumption.
         let admittedAt = ContinuousClock.now
@@ -54,6 +68,13 @@ private final class ControlledEngine: CBv2Engine, @unchecked Sendable {
         case .unreachable:
             return .deadlineUnreachable(projectedWork: work)
         case .admitted:
+            if delayAcceptedReturn {
+                // This suspension is reached only after engine submission;
+                // it consumes the original deadline without an entry-poll race.
+                try await ContinuousClock().sleep(
+                    until: firstTokenDeadline.deadline.advanced(by: .milliseconds(1)))
+            }
+            lock.withLock { acceptedReturnTiming = (admittedAt, .now) }
             return .admitted(
                 stream: try submit(request), projectedWork: work, admittedAt: admittedAt,
                 retirement: CBv2RequestRetirement(waitUntilRetired: {}))
@@ -629,28 +650,31 @@ struct DeadlineDecisionBridgeTests {
         #expect(await bridge._testLivePumpCount() == 0)
     }
 
-    @Test("accepted engine verdict survives expiry while submit is suspended")
+    @Test("accepted engine verdict survives expiry while submit is suspended", .timeLimit(.minutes(1)))
     func acceptedThenExpired() async throws {
         let engine = ControlledEngine()
         let bridge = await makeDeadlineBridge(engine: engine)
         let gate = AsyncGate()
-        engine.armDeadlineSubmit(gate: gate, verdict: .admitted)
+        gate.open()
+        engine.armDeadlineSubmit(
+            gate: gate, verdict: .admitted, returnAcceptedAfterDeadline: true)
         engine.setProjectedWork(.bounded(
             work: CBv2FirstTokenScheduledWork(
                 prefillTokens: 3, decodeTokens: 0, scheduledSteps: 1, mixedSteps: 0),
             serviceDuration: .milliseconds(1)))
         let profile = RequestProfileBuilder()
-        let deadline = FirstContentDeadline(relativeBudgetMilliseconds: 1_000)
-        let task = Task {
-            try await submitControlled(
+        // Leave setup time for the full provider suite's concurrent GPU/model
+        // work. The engine fixture itself waits until this real deadline has
+        // expired; no separate submit task or fixed-count yield loop competes
+        // to observe entry during a one-second window.
+        let deadline = FirstContentDeadline(relativeBudgetMilliseconds: 30_000)
+        await #expect(throws: PreContentDeadlineFailure.deadlineUnreachable) {
+            _ = try await submitControlled(
                 bridge: bridge, requestId: "accepted-expired", profile: profile, deadline: deadline)
         }
-        try await awaitDeadlineSubmitEntered(engine)
-        try await ContinuousClock().sleep(until: deadline.instant.advanced(by: .milliseconds(1)))
-        gate.open()
-        await #expect(throws: PreContentDeadlineFailure.deadlineUnreachable) {
-            _ = try await task.value
-        }
+        let timing = try #require(engine.deadlineReturnTiming)
+        #expect(timing.admittedAt < deadline.instant)
+        #expect(timing.returnedAt >= deadline.instant)
         let wire = profile.wireObject()
         let decision = try #require(wire.deadlineDecision)
         #expect(decision.verdict == .accepted)

@@ -40,20 +40,29 @@ func inferenceOutcomeEndpoint(r *http.Request) bool {
 	return false
 }
 
-// observeRequestOutcome encloses drain/auth/rate-limit/sealed and handler exits.
+// observeRequestOutcome encloses recovery, drain/auth/rate-limit/sealed and handler exits.
 // Wrong methods, unmatched paths and OPTIONS never enter this population.
 func (s *Server) observeRequestOutcome(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.requestOutcomes == nil {
+		if s.requestOutcomes == nil || !inferenceOutcomeEndpoint(r) {
 			next(w, r)
 			return
+		}
+		// ServeMux matches escaped path segments, not just decoded URL.Path.
+		// For example /v1%2Fmessages is an unmatched route, not /v1/messages.
+		if s.mux != nil {
+			_, pattern := s.mux.Handler(r)
+			if pattern != http.MethodPost+" "+r.URL.Path {
+				next(w, r)
+				return
+			}
 		}
 		meta := requestMetaFromContext(r.Context())
 		if meta == nil {
 			meta = &requestMeta{coordID: uuid.NewString(), start: time.Now()}
 			r = r.WithContext(context.WithValue(r.Context(), requestMetaKey{}, meta))
 		}
-		o := &requestOutcome{sink: s.requestOutcomes, finalized: make(map[string]store.RequestAttemptOutcome), record: store.RequestOutcomeRecord{CoordRequestID: meta.coordID, SchemaVersion: store.RequestOutcomeSchemaVersion, ReceivedAt: meta.start, Endpoint: r.URL.Path, RawStage: "drain", Termination: "in_progress", ResponseProgress: "unknown", ProviderOutcome: "no_terminal", Attempts: []store.RequestAttemptOutcome{}}}
+		o := &requestOutcome{sink: s.requestOutcomes, finalized: make(map[string]store.RequestAttemptOutcome), record: store.RequestOutcomeRecord{CoordRequestID: meta.coordID, SchemaVersion: store.RequestOutcomeSchemaVersion, ReceivedAt: meta.start, Endpoint: r.URL.Path, RawStage: "drain", Termination: "in_progress", ResponseProgress: "unknown", ProviderOutcome: "no_terminal", ResponseTerminal: "unknown", Attempts: []store.RequestAttemptOutcome{}}}
 		r = r.WithContext(context.WithValue(r.Context(), requestOutcomeKey{}, o))
 		ow := &outcomeWriter{ResponseWriter: w, outcome: o}
 		s.requestOutcomes.received.Add(1)
@@ -131,13 +140,8 @@ func (o *requestOutcome) refreshLocked() {
 		if len(r.Model) > 256 {
 			r.Model = ""
 		}
-		if rp.ParsedUS.Load() > 0 || rp.Model != "" {
-			stream := rp.Stream
-			r.Stream = &stream
-		}
 		r.ClientDeparted = r.ClientDeparted || rp.ClientGoneUS.Load() > 0
 		r.ClientWriteError = r.ClientWriteError || rp.ClientWriteErr.Load()
-		r.EgressCompleted = rp.DoneFlushedUS.Load() > 0 && !r.ClientWriteError && !r.EgressError
 		attempts := rp.Attempts()
 		r.AttemptsTotal = len(attempts)
 		for _, ap := range attempts {
@@ -157,6 +161,7 @@ func (o *requestOutcome) refreshLocked() {
 			}
 		}
 	}
+	r.EgressCompleted = r.EgressCompleted && !r.ClientWriteError && !r.EgressError
 	r.AttemptsComplete = !r.AttemptsTruncated && len(o.finalized) == r.AttemptsTotal
 	if o.finished && r.AttemptsComplete && r.FinalizedAt == nil {
 		now := time.Now()
@@ -186,8 +191,6 @@ func annotateOutcomeRejection(info rejectionInfo) {
 	if info.resolvedModel != "" && len(info.resolvedModel) <= 256 {
 		o.record.Model = info.resolvedModel
 	}
-	stream := info.stream
-	o.record.Stream = &stream
 }
 
 // classifyRequestOutcome is analytics-only. It never feeds routing, status,
@@ -212,11 +215,13 @@ func classifyRequestOutcome(r *store.RequestOutcomeRecord) {
 		r.Termination = "client_departure"
 	case r.ClientWriteError || r.EgressError:
 		r.Termination = "interrupted_response"
-	case r.ProviderOutcome == "completed" && r.EgressCompleted && r.HTTPStatus >= 200 && r.HTTPStatus < 300:
+	case r.ProviderOutcome == "completed" && r.ResponseTerminal == "completed" && r.EgressCompleted && r.HTTPStatus >= 200 && r.HTTPStatus < 300:
 		r.Termination = "completed"
 	case r.HTTPStatus >= 400:
 		r.Termination = "rejected"
-	case r.ProviderContentObserved || r.ContentWriteCompleted || r.ProviderOutcome == "error":
+	case r.RawReason == "handler_panic":
+		r.Termination = "interrupted_response"
+	case r.ProviderContentObserved || r.ContentWriteCompleted || r.ProviderOutcome == "error" || r.ResponseTerminal == "incomplete" || r.ResponseTerminal == "error":
 		r.Termination = "interrupted_response"
 	}
 	r.NormalizedCode = normalizedRequestOutcome(r.RawStage, r.RawReason, r.HTTPStatus, r.Termination)

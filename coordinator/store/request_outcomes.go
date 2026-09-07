@@ -25,6 +25,7 @@ type RequestOutcomeRecord struct {
 	Stream                  *bool                   `json:"stream,omitempty"`
 	HTTPStatus              int                     `json:"http_status"`
 	Termination             string                  `json:"termination"`
+	ResponseTerminal        string                  `json:"response_terminal,omitempty"`
 	ResponseProgress        string                  `json:"response_progress"`
 	ProviderOutcome         string                  `json:"provider_outcome"`
 	RawStage                string                  `json:"raw_stage"`
@@ -75,6 +76,11 @@ type RequestOutcomeStore interface {
 func validateRequestOutcome(r RequestOutcomeRecord) error {
 	if r.CoordRequestID == "" || len(r.CoordRequestID) > 64 || r.SchemaVersion != RequestOutcomeSchemaVersion || r.Revision < 1 || r.ReceivedAt.IsZero() || r.UpdatedAt.IsZero() {
 		return errors.New("store: invalid request outcome identity/version")
+	}
+	switch r.ResponseTerminal {
+	case "", "unknown", "completed", "incomplete", "error":
+	default:
+		return errors.New("store: invalid response terminal")
 	}
 	if len(r.Termination) > 64 || len(r.ResponseProgress) > 64 || len(r.ProviderOutcome) > 64 {
 		return errors.New("store: oversized request outcome classification")

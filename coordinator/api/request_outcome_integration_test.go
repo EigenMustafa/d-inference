@@ -86,7 +86,7 @@ func TestRequestOutcomesAllEndpointsWithoutProfiler(t *testing.T) {
 				count++
 				rows := awaitRequestOutcomes(t, st, count)
 				r := rows[len(rows)-1]
-				if r.Termination != "completed" || r.ProviderOutcome != "completed" || !r.EgressCompleted || !r.ContentWriteCompleted || !r.ProviderContentObserved {
+				if r.Termination != "completed" || r.ResponseTerminal != "completed" || r.ProviderOutcome != "completed" || !r.EgressCompleted || !r.ContentWriteCompleted || !r.ProviderContentObserved {
 					t.Fatalf("completion evidence missing: %+v body=%s", r, body)
 				}
 				if r.Endpoint != endpoint || r.Stream == nil || *r.Stream != stream || r.CoordRequestID == "client-controlled-same-id" || ids[r.CoordRequestID] {
@@ -147,7 +147,7 @@ func TestRequestOutcomesAllEarlyExits(t *testing.T) {
 					count++
 					rows := awaitRequestOutcomes(t, st, count)
 					r := rows[len(rows)-1]
-					if r.Termination != "rejected" || r.HTTPStatus != res.StatusCode || r.RawStage != kind || r.AttemptsTotal != 0 || r.ContentWriteCompleted || r.EgressCompleted {
+					if r.Termination != "rejected" || r.HTTPStatus != res.StatusCode || r.RawStage != kind || r.AttemptsTotal != 0 || r.ContentWriteCompleted || !r.EgressCompleted || r.ResponseTerminal != "error" {
 						t.Fatalf("early exit %+v", r)
 					}
 				})
@@ -185,7 +185,7 @@ func TestRequestOutcomesProviderErrorAfterContentAllEndpoints(t *testing.T) {
 				if stream {
 					want = "interrupted_response"
 				}
-				if r.Termination != want || r.ProviderOutcome != "error" || !r.ProviderContentObserved || r.ContentWriteCompleted != stream || r.EgressCompleted {
+				if r.Termination != want || r.ProviderOutcome != "error" || !r.ProviderContentObserved || r.ContentWriteCompleted != stream || !r.EgressCompleted || r.ResponseTerminal != "error" {
 					t.Fatalf("error evidence %+v", r)
 				}
 			})
@@ -219,7 +219,7 @@ func TestRequestOutcomesZeroTokenCompletionAllEndpoints(t *testing.T) {
 				}
 				count++
 				r := awaitRequestOutcomes(t, st, count)[count-1]
-				if r.Termination != "completed" || r.ProviderOutcome != "completed" || !r.EgressCompleted || r.ProviderContentObserved || r.ContentWriteCompleted {
+				if r.Termination != "completed" || r.ResponseTerminal != "completed" || r.ProviderOutcome != "completed" || !r.EgressCompleted || r.ProviderContentObserved || r.ContentWriteCompleted {
 					t.Fatalf("zero-token evidence %+v", r)
 				}
 			})
@@ -284,7 +284,7 @@ func TestRequestOutcomesBalanceModelAndPreflightAllEndpoints(t *testing.T) {
 						res.Body.Close()
 						count++
 						r := awaitRequestOutcomes(t, st, count)[count-1]
-						if r.Termination != "rejected" || r.RawStage != stage || r.AttemptsTotal != 0 || r.ContentWriteCompleted {
+						if r.Termination != "rejected" || r.RawStage != stage || r.Stream == nil || *r.Stream != stream || r.AttemptsTotal != 0 || r.ContentWriteCompleted {
 							t.Fatalf("%s evidence %+v", stage, r)
 						}
 					})
@@ -319,6 +319,92 @@ func TestRequestOutcomeInferenceIdentityPreservesHeader(t *testing.T) {
 				t.Fatalf("canonical identity not independent: %q, %v", canonical, err)
 			}
 			seen[canonical] = true
+		}
+	}
+}
+
+func TestRequestOutcomesResponsesIncomplete(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			reg, st, srv, ts := setupTTFTFailoverServer(t)
+			t.Cleanup(srv.Close)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			const model = "outcome-response-incomplete"
+			startFailoverProvider(t, ctx, ts, reg, failoverProviderConfig{Name: "limited-provider", Version: "0.8.10", Models: []failoverModelSpec{{ID: model}}, Script: func(ctx context.Context, fp *failoverProvider, req protocol.InferenceRequestMessage, _ []byte) {
+				fp.sendContentChunk(ctx, req, model, "partial answer")
+				fp.sendComplete(ctx, req, protocol.UsageInfo{PromptTokens: 5, CompletionTokens: 16})
+			}})
+			req, _ := http.NewRequestWithContext(ctx, "POST", ts.URL+"/v1/responses", strings.NewReader(nativeOutcomeBody("/v1/responses", model, stream)))
+			req.Header.Set("Authorization", "Bearer test-key")
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			row := awaitRequestOutcomes(t, st, 1)[0]
+			if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"incomplete"`) {
+				t.Fatalf("response changed: %d %s", res.StatusCode, body)
+			}
+			if row.ProviderOutcome != "completed" || row.ResponseTerminal != "incomplete" || !row.EgressCompleted || row.Termination != "interrupted_response" || !row.ContentWriteCompleted {
+				t.Fatalf("incomplete response counted as completion: %+v", row)
+			}
+		})
+	}
+}
+
+func TestRequestOutcomesNativeResponsesThroughHTTP(t *testing.T) {
+	for _, statuses := range [][]string{{"completed"}, {"completed", "failed"}, {"failed", "completed"}, {"completed", "incomplete"}} {
+		for _, initial := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/initial=%t", strings.Join(statuses, "_"), initial), func(t *testing.T) {
+				reg, st, srv, ts := setupTTFTFailoverServer(t)
+				t.Cleanup(srv.Close)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				const model = "outcome-native-responses"
+				startFailoverProvider(t, ctx, ts, reg, failoverProviderConfig{Name: "native-provider", Version: "0.8.10", Models: []failoverModelSpec{{ID: model}}, Script: func(ctx context.Context, fp *failoverProvider, req protocol.InferenceRequestMessage, _ []byte) {
+					// Initial bare Responses event exercises the existing relay latch.
+					// Event-prefixed grouped terminals exercise independent observation.
+					if initial {
+						writeEncryptedTestChunk(t, ctx, fp.conn, req, fp.pubKey, `data: {"type":"response.created","response":{"status":"in_progress"}}`)
+					}
+					var frames []string
+					for _, status := range statuses {
+						frames = append(frames, fmt.Sprintf("event: response.%s\ndata: {\"type\":\"response.%s\",\"response\":{\"status\":\"%s\"}}", status, status, status))
+					}
+					writeEncryptedTestChunk(t, ctx, fp.conn, req, fp.pubKey, strings.Join(frames, "\n\n"))
+					fp.sendComplete(ctx, req, protocol.UsageInfo{PromptTokens: 5, CompletionTokens: 0})
+				}})
+				req, _ := http.NewRequestWithContext(ctx, "POST", ts.URL+"/v1/chat/completions", strings.NewReader(nativeOutcomeBody("/v1/chat/completions", model, true)))
+				req.Header.Set("Authorization", "Bearer test-key")
+				res, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, _ := io.ReadAll(res.Body)
+				res.Body.Close()
+				row := awaitRequestOutcomes(t, st, 1)[0]
+				first := statuses[0]
+				if first == "failed" {
+					first = "error"
+				}
+				want := "completed"
+				if len(statuses) > 1 {
+					want = "unknown"
+				}
+				if res.StatusCode != 200 || row.ResponseTerminal != first || row.ProviderOutcome != "completed" || !row.EgressCompleted || row.EvidenceConflict != (len(statuses) > 1) || row.Termination != want {
+					t.Fatalf("native terminal evidence: %+v; body=%s", row, body)
+				}
+				for _, status := range statuses {
+					if !strings.Contains(string(body), `"type":"response.`+status+`"`) {
+						t.Fatal("native terminal missing from response")
+					}
+				}
+				if initial && strings.Contains(string(body), "[DONE]") {
+					t.Fatal("native Responses latch behavior changed")
+				}
+			})
 		}
 	}
 }

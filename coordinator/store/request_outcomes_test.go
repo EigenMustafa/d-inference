@@ -131,3 +131,67 @@ func TestRequestOutcomeRetention(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestOutcomeTerminalStoreContract(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			var s RequestOutcomeStore
+			if backend == "memory" {
+				s = NewMemory(Config{})
+			} else {
+				s = testPostgresStore(t)
+			}
+			ctx := context.Background()
+			now := time.Now()
+			r := RequestOutcomeRecord{CoordRequestID: "terminal-contract", SchemaVersion: 1, Revision: 1, ReceivedAt: now, UpdatedAt: now, Endpoint: "/v1/responses", Attempts: []RequestAttemptOutcome{}}
+			write := func() {
+				t.Helper()
+				if err := s.RecordRequestOutcomes(ctx, []RequestOutcomeRecord{r}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func() RequestOutcomeRecord {
+				t.Helper()
+				rows, err := s.RequestOutcomes(ctx, now.Add(-time.Second), now.Add(time.Second), 10)
+				if err != nil || len(rows) != 1 {
+					t.Fatalf("read=%+v error=%v", rows, err)
+				}
+				return rows[0]
+			}
+			// Missing legacy JSONB fields remain missing, not completed.
+			write()
+			if got := read(); got.ResponseTerminal != "" {
+				t.Fatalf("legacy terminal invented: %+v", got)
+			}
+			for _, terminal := range []string{"unknown", "incomplete", "error", "completed"} {
+				r.Revision++
+				r.ResponseTerminal = terminal
+				write()
+				if got := read(); got.ResponseTerminal != terminal || got.EvidenceConflict {
+					t.Fatalf("terminal round trip: %+v", got)
+				}
+			}
+			// A contradictory same-revision observation flags the record while
+			// retaining its first snapshot. A later revision cannot erase it.
+			r.ResponseTerminal = "error"
+			write()
+			if got := read(); !got.EvidenceConflict || got.ResponseTerminal != "completed" {
+				t.Fatalf("terminal conflict discarded: %+v", got)
+			}
+			r.Revision++
+			r.ResponseTerminal = "completed"
+			write()
+			if got := read(); !got.EvidenceConflict || got.ResponseTerminal != "completed" {
+				t.Fatalf("later revision cleared conflict: %+v", got)
+			}
+			r.ResponseTerminal = "unsupported_future_value"
+			r.Revision++
+			if err := s.RecordRequestOutcomes(ctx, []RequestOutcomeRecord{r}); err == nil {
+				t.Fatal("unbounded response terminal accepted")
+			}
+			if got := read(); got.Revision == r.Revision {
+				t.Fatal("invalid terminal changed stored record")
+			}
+		})
+	}
+}

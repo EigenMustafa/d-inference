@@ -185,6 +185,7 @@ func (e *responsesStreamEmitter) emit(eventType string, fields map[string]any) {
 	}
 	n, werr := fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", eventType, data)
 	markContentWrite(e.w, generatedContentJSON(data), n, len(eventType)+len(data)+16, werr)
+	markResponseTerminalWrite(e.w, responseEventTerminals(data), n, len(eventType)+len(data)+16, werr)
 	if n != len(eventType)+len(data)+16 {
 		e.stamps.writeErr()
 	}

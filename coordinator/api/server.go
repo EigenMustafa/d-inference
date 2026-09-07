@@ -2794,10 +2794,10 @@ func (s *Server) routes() {
 	// because it isn't counted in httpInflight, won't be seen by WaitForInflightZero
 	// — so a graceful shutdown could cut it off mid-flight. Add new dispatch routes
 	// here, gated, alongside the four below.
-	s.mux.HandleFunc("POST /v1/chat/completions", s.observeRequestOutcome(s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleChatCompletions))))))
-	s.mux.HandleFunc("POST /v1/responses", s.observeRequestOutcome(s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleChatCompletions)))))) // Responses API — same handler, auto-detects input vs messages
-	s.mux.HandleFunc("POST /v1/completions", s.observeRequestOutcome(s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleCompletions))))))
-	s.mux.HandleFunc("POST /v1/messages", s.observeRequestOutcome(s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleAnthropicMessages))))))
+	s.mux.HandleFunc("POST /v1/chat/completions", s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleChatCompletions)))))
+	s.mux.HandleFunc("POST /v1/responses", s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleChatCompletions))))) // Responses API — same handler, auto-detects input vs messages
+	s.mux.HandleFunc("POST /v1/completions", s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleCompletions)))))
+	s.mux.HandleFunc("POST /v1/messages", s.drainGate(s.requireAuth(s.rateLimitConsumer(s.sealedTransport(s.handleAnthropicMessages)))))
 	s.mux.HandleFunc("GET /v1/models", s.requireAuth(s.handleListModels))
 	// Dedicated OpenRouter provider feed — pure OpenRouter schema, no Darkbloom metadata.
 	s.mux.HandleFunc("GET /v1/models/openrouter", s.requireAuth(s.handleListModelsOpenRouter))
@@ -3164,11 +3164,11 @@ func (s *Server) handleUnimplementedEndpoint(w http.ResponseWriter, r *http.Requ
 // Handler returns the root http.Handler with global middleware applied.
 // Middleware order (outside-in):
 //
-//	cors → recover → logging → mux
+//	cors → request outcome (inference POSTs only) → recover → logging → mux
 //
 // Recover must sit outside logging so a panic during logging doesn't leak.
 func (s *Server) Handler() http.Handler {
-	return s.corsMiddleware(s.recoverMiddleware(s.loggingMiddleware(s.bodyLimitMiddleware(s.mux))))
+	return s.corsMiddleware(s.observeRequestOutcome(s.recoverMiddleware(s.loggingMiddleware(s.bodyLimitMiddleware(s.mux))).ServeHTTP))
 }
 
 // bodyLimitMiddleware caps every request body at maxRequestBodyBytes so an
@@ -3215,6 +3215,7 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 				if recErr, ok := rec.(error); ok && errors.Is(recErr, http.ErrAbortHandler) {
 					panic(rec)
 				}
+				markOutcomePanic(r)
 				stack := string(debug.Stack())
 				s.logger.Error("panic in HTTP handler",
 					"error", fmt.Sprintf("%v", rec),
@@ -3623,7 +3624,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), ctxKeyRequestID, reqID)
 		// Profiler correlation id is ALWAYS coordinator-minted (the client-supplied
 		// X-Request-ID above is echoed and logged but never persisted).
-		if s.profilerEnabled() || inferenceOutcomeEndpoint(r) {
+		if requestMetaFromContext(ctx) == nil && (s.profilerEnabled() || inferenceOutcomeEndpoint(r)) {
 			meta := &requestMeta{coordID: reqID, start: start}
 			if inferenceOutcomeEndpoint(r) || r.Header.Get("X-Request-ID") != "" {
 				meta.coordID = uuid.NewString()

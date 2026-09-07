@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-07 · commit `1fa8c4336`
+> Last updated: 2026-09-07 · commit `b07fe2c39`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -54,6 +54,13 @@ gofmt -l .                                 # must print nothing
 golangci-lint run                          # .golangci.yml
 ```
 
+`TestProfile_RequestProfilesRecorded` checks that the stored transport estimate
+matches the difference of coordinator and provider spans. Negative values remain
+valid observations; this is not a direct nonnegative network-latency measurement.
+The focused `TestApplyProviderProfileTransportEstimateArithmetic` regression covers
+positive, negative and missing operands in
+`coordinator/api/profiler_provider_test.go`.
+
 Store tests that need Postgres skip themselves when `DATABASE_URL` is unset
 (`coordinator/store/harness_test.go`, `testPostgresStore`); CI provides a
 `postgres:16` service with user/password/db `testbed`. The pre-push hook runs
@@ -98,6 +105,16 @@ does not isolate other suites. See `StartCommandTests.defaultApplyProjectsSettin
 in `provider-swift/Tests/DarkbloomCLITests/StartCommandTests.swift` and
 `GPUEnforcementTests.requireMetalPinsGPU` in
 `provider-swift/Tests/ProviderCoreTests/GPUEnforcementTests.swift`.
+
+The standalone resource-release test and the two periodic MTP sampler tests
+also use child processes, giving their real listener/timer tasks an executor
+separate from concurrent MLX tests. Their original deadlines, recurring-sample
+requirements and shutdown/resource assertions remain active. Each helper
+requires `ExitTest.current` so it cannot accidentally run in the parent process.
+See `standaloneServerStopAndWaitReleaseResidentBridgeAndSSDResources` in
+`provider-swift/Tests/ProviderCoreTests/StandaloneServerTests.swift` and
+`periodicSamplerEmitsForEverySlot` / `shutdownStopsSampler` in
+`provider-swift/Tests/ProviderCoreTests/MTPPostureTelemetryTests.swift`.
 
 **Nested `libs/mlx-swift-lm` suites.** The paged-KV correctness gates live in
 the submodule, not in `provider-swift/`. Build them once, stage the metallib,

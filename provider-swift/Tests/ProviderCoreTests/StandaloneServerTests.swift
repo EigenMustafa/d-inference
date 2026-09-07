@@ -157,7 +157,17 @@ import Testing
     #expect(StandaloneServer.schedulerErrorStatus(for: "unexpected backend failure") == .internalServerError)
 }
 
-@Test func standaloneServerStopAndWaitReleaseResidentBridgeAndSSDResources() async throws {
+@Test func standaloneServerStopAndWaitReleaseResidentBridgeAndSSDResources() async {
+    // Give the real listener and shutdown tasks their own executor. Concurrent
+    // MLX tests can occupy the parent process until the bind deadline expires.
+    await #expect(processExitsWith: .success) {
+        try await assertStandaloneStopReleasesResidentResources()
+    }
+}
+
+private func assertStandaloneStopReleasesResidentResources() async throws {
+    let isChildProcess = ExitTest.current != nil
+    try #require(isChildProcess)
     let parent = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
         .appendingPathComponent("standalone-stop-\(UUID().uuidString)", isDirectory: true)
     let dedicatedRoot = parent.appendingPathComponent("kv2", isDirectory: true)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // outcomeWriter observes only locally accepted writes. It retains no response
@@ -11,31 +12,41 @@ import (
 // from headers, preambles, an arbitrary HTTP 200, or a partial Write.
 type outcomeWriter struct {
 	http.ResponseWriter
-	outcome     *requestOutcome
-	status      int
-	writeFailed bool
+	outcome      *requestOutcome
+	status       int
+	writeFailed  bool
+	jsonResponse bool
 }
 
 func (w *outcomeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (w *outcomeWriter) WriteHeader(code int) {
+	// A rejected status (or another pre-commit panic) may still be recovered
+	// into a 500. Record only after the underlying writer accepts the header.
+	jsonResponse := strings.HasPrefix(w.Header().Get("Content-Type"), "application/json")
+	w.ResponseWriter.WriteHeader(code)
 	if w.status == 0 && code >= 200 {
 		w.status = code
+		w.jsonResponse = jsonResponse
 	}
-	w.ResponseWriter.WriteHeader(code)
 }
 func (w *outcomeWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = 200
+		w.jsonResponse = strings.HasPrefix(w.Header().Get("Content-Type"), "application/json")
 	}
 	n, err := w.ResponseWriter.Write(b)
 	if err != nil || n != len(b) {
 		w.writeFailed = true
+	}
+	if w.jsonResponse {
+		markResponseTerminalWrite(w, responseBodyTerminals(b), n, len(b), err)
 	}
 	return n, err
 }
 func (w *outcomeWriter) Flush() {
 	if w.status == 0 {
 		w.status = 200
+		w.jsonResponse = strings.HasPrefix(w.Header().Get("Content-Type"), "application/json")
 	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

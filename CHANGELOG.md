@@ -3,6 +3,7 @@
 ## Unreleased: incoming request accounting
 
 - Add the unsampled request-outcome ledger and bounded admin inspection with explicit coverage and completion evidence.
+- Record recovered HTTP errors and parsed streaming mode accurately. Distinguish completed, incomplete and error response terminals after successful writes, preserving contradictory evidence and earlier content progress.
 
 ## Unreleased — stats request-flow refresh
 

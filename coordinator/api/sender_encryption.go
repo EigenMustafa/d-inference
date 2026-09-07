@@ -349,6 +349,7 @@ func (w *sealingResponseWriter) flushCompleteEvents() {
 		encoded := base64.StdEncoding.EncodeToString(sealed)
 		n, writeErr := fmt.Fprintf(w.inner, "data: %s\n\n", encoded)
 		markContentWrite(w.inner, generatedContentSSE(event), n, len(encoded)+8, writeErr)
+		markResponseTerminalWrite(w.inner, responseStreamTerminals(event), n, len(encoded)+8, writeErr)
 	}
 }
 
@@ -361,6 +362,7 @@ func (w *sealingResponseWriter) finish() {
 		// emit it now to avoid losing data.
 		if w.sseScratch.Len() > 0 {
 			content := generatedContentSSE(w.sseScratch.Bytes())
+			terminals := responseStreamTerminals(w.sseScratch.Bytes())
 			sealed, err := sealBytes(w.sseScratch.Bytes(), w.clientPub, w.coordPriv)
 			if err != nil {
 				markEgressError(w.inner)
@@ -370,6 +372,7 @@ func (w *sealingResponseWriter) finish() {
 				encoded := base64.StdEncoding.EncodeToString(sealed)
 				n, writeErr := fmt.Fprintf(w.inner, "data: %s\n\n", encoded)
 				markContentWrite(w.inner, content, n, len(encoded)+8, writeErr)
+				markResponseTerminalWrite(w.inner, terminals, n, len(encoded)+8, writeErr)
 				if w.flusher != nil {
 					w.flusher.Flush()
 				}
@@ -397,6 +400,7 @@ func (w *sealingResponseWriter) finish() {
 		w.inner.WriteHeader(w.statusCode)
 		n, writeErr := w.inner.Write(envelope)
 		markContentWrite(w.inner, generatedContentJSON(w.bodyBuf.Bytes()), n, len(envelope), writeErr)
+		markResponseTerminalWrite(w.inner, responseBodyTerminals(w.bodyBuf.Bytes()), n, len(envelope), writeErr)
 		return
 	}
 }

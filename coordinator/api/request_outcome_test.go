@@ -22,13 +22,13 @@ func TestRequestOutcomeClassificationAndMappings(t *testing.T) {
 		r          store.RequestOutcomeRecord
 		want, code string
 	}{
-		{"recovered deadline", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", EgressCompleted: true}, "completed", ""},
-		{"departure after provider completion", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", EgressCompleted: true, ClientDeparted: true}, "client_departure", ""},
+		{"recovered deadline", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", ResponseTerminal: "completed", EgressCompleted: true}, "completed", ""},
+		{"departure after provider completion", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", ResponseTerminal: "completed", EgressCompleted: true, ClientDeparted: true}, "client_departure", ""},
 		{"precontent cancellation with planned429", store.RequestOutcomeRecord{HTTPStatus: 429, ClientDeparted: true, RawStage: "dispatch", RawReason: "first_chunk_timeout"}, "client_departure", ""},
 		{"nonstream failure before body", store.RequestOutcomeRecord{HTTPStatus: 502, ProviderContentObserved: true, ProviderOutcome: "error"}, "rejected", "ext_unknown"},
 		{"stream incomplete", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderContentObserved: true, ContentWriteCompleted: true}, "interrupted_response", ""},
 		{"write failure", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", ClientWriteError: true}, "interrupted_response", ""},
-		{"zero token complete", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", EgressCompleted: true}, "completed", ""},
+		{"zero token complete", store.RequestOutcomeRecord{HTTPStatus: 200, ProviderOutcome: "completed", ResponseTerminal: "completed", EgressCompleted: true}, "completed", ""},
 		{"preamble only", store.RequestOutcomeRecord{HTTPStatus: 200, EgressCompleted: true}, "unknown", ""},
 		{"final timeout", store.RequestOutcomeRecord{HTTPStatus: 429, RawStage: "dispatch", RawReason: "first_chunk_timeout"}, "rejected", "ext_first_content_timeout"},
 		{"deadline exhaustion", store.RequestOutcomeRecord{HTTPStatus: 429, RawStage: "dispatch", RawReason: "deadline_unreachable"}, "rejected", "ext_coordinator_exhausted"},

@@ -218,6 +218,10 @@ func (e *completionsStreamEmitter) finish(usage protocol.UsageInfo) {
 	addResponseProof(event, e.pr)
 	e.emit(event)
 	n, werr := fmt.Fprint(e.w, "data: [DONE]\n\n")
+	markResponseTerminalWrite(e.w, responseTerminals{first: "completed"}, n, len("data: [DONE]\n\n"), werr)
+	if n != len("data: [DONE]\n\n") {
+		e.stamps.writeErr()
+	}
 	e.flusher.Flush()
 	e.stamps.wrote(n, werr)
 	e.stamps.done()
@@ -234,6 +238,7 @@ func (e *completionsStreamEmitter) emit(value any) {
 	}
 	n, werr := fmt.Fprintf(e.w, "data: %s\n\n", encoded)
 	markContentWrite(e.w, generatedContentJSON(encoded), n, len(encoded)+8, werr)
+	markResponseTerminalWrite(e.w, responseEventTerminals(encoded), n, len(encoded)+8, werr)
 	if n != len(encoded)+8 {
 		e.stamps.writeErr()
 	}
@@ -394,6 +399,7 @@ func (e *messagesStreamEmitter) emit(eventType string, fields map[string]any) {
 	}
 	n, werr := fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", eventType, encoded)
 	markContentWrite(e.w, generatedContentJSON(encoded), n, len(eventType)+len(encoded)+16, werr)
+	markResponseTerminalWrite(e.w, responseEventTerminals(encoded), n, len(eventType)+len(encoded)+16, werr)
 	if n != len(eventType)+len(encoded)+16 {
 		e.stamps.writeErr()
 	}

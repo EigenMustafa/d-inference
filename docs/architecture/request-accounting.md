@@ -1,6 +1,6 @@
 # Incoming request accounting
 
-> Last updated: 2026-09-06 · commit `bbf6f83d4`
+> Last updated: 2026-09-07 · commit `b07fe2c39`
 
 `request_outcomes` records unsampled observations of incoming inference requests, including early rejections, independently of sampled attempt profiles. Operators use this source to distinguish final request outcomes from internal retries. The dashboard aggregation and presentation work in issue #845 remains open.
 
@@ -12,16 +12,17 @@ The ledger is asynchronous and best effort. Unsampled means every covered reques
 
 ## Mechanism
 
-`coordinator/api/request_outcome.go` (`observeRequestOutcome`) wraps each inference route before drain, authentication, rate limiting, sealed transport and the endpoint handler. The logging middleware mints an independent UUID for inference routes regardless of profiler configuration. This canonical ID joins the ledger and detailed profiles. The existing `X-Request-ID` header and access-log ID retain their behavior: a supplied client ID is echoed, otherwise the coordinator generates the existing short ID. Neither supplies ledger identity.
+`coordinator/api/request_outcome.go` (`observeRequestOutcome`) wraps the root recovery middleware for the four covered inference POST paths, before drain, authentication, rate limiting, sealed transport and the endpoint handler. It mints an independent UUID regardless of profiler configuration; logging reuses that accounting identity. This canonical ID joins the ledger and detailed profiles. The existing `X-Request-ID` header and access-log ID retain their behavior: a supplied client ID is echoed, otherwise the coordinator generates the existing short ID. Neither supplies ledger identity.
 
 ```mermaid
 flowchart LR
   HTTP[Incoming POST] --> Observe[observeRequestOutcome: receipt]
-  Observe --> Gates[Drain, auth, rate limit, sealed transport]
+  Observe --> Recovery[Existing panic recovery]
+  Recovery --> Gates[Drain, auth, rate limit, sealed transport]
   Gates --> Handler[Chat/Responses or generic handler]
   Handler --> Attempts[RequestProfile lifecycle stamps]
   Attempts --> Relay[Endpoint relay and local writes]
-  Relay --> Finish[Handler finish: one request observation]
+  Relay --> Finish[Recovered handler return: one request observation]
   Attempts --> Late[Late provider terminal or bounded fallback]
   Late --> Revision[Enrich same coordinator UUID]
   Finish --> Sink[Dedicated bounded requestOutcomeSink]
@@ -37,9 +38,9 @@ The request sink has 4,096 queued snapshots, one worker, batches of up to 128, a
 
 | Contract | Definition and code |
 |---|---|
-| Covered requests | Matched `POST /v1/chat/completions`, `/v1/responses`, `/v1/completions`, `/v1/messages`, streaming and non-streaming. The observer wraps all route middleware in `coordinator/api/server.go` (`routes`). |
-| Early exits | Drain, auth, account/key rate limits, sealed-envelope/decryption, validation, model resolution, balance, preflight, queue and dispatch exits are included. Unknown pre-parse streaming mode is NULL, not false. Existing explicit rejection stages/reasons are copied; uncovered reason details remain `ext_unknown` with the last known pipeline stage. |
-| Exclusions | OPTIONS, other methods, unmatched paths, and connections that never enter these HTTP routes. An abort/panic records `handler_aborted`; the outer recovery response is outside the observer, so no replacement status is invented. |
+| Covered requests | Matched `POST /v1/chat/completions`, `/v1/responses`, `/v1/completions`, `/v1/messages`, streaming and non-streaming. The root observer filters the four exact POST paths in `coordinator/api/server.go` (`Handler`). |
+| Early exits | Drain, auth, account/key rate limits, sealed-envelope/decryption, validation, model resolution, balance, preflight, queue and dispatch exits are included. Streaming mode remains unknown before valid JSON parsing. `parseInferencePrelude` records the handler's parsed true/false mode before model lookup, including catalog rejections. Existing explicit rejection stages/reasons are copied; uncovered reason details remain `ext_unknown` with the last known pipeline stage. |
+| Exclusions | OPTIONS, other methods, unmatched paths, and connections that never enter these HTTP routes. A recovered panic records `handler_panic` and the actual final HTTP status after recovery writes. A panic after headers preserves the committed status and response format. Raw recovery JSON written into an already committed SSE stream is not counted as a valid streaming terminal. An unrecovered abort records `handler_aborted`; no replacement status is invented. |
 | Request identity | `coord_request_id`, a coordinator-minted UUID. Repeated client `X-Request-ID` values do not merge requests. Empty identities are rejected by both stores. Count HTTP requests, never `n` or attempt rows. |
 | Attempt identity | `(request_id, attempt)`, matching routes/profiles. `backup_of` and `winning` retain speculative relationships. A selected/queued placeholder is an attempt record, not necessarily a transmitted provider request. |
 | Receipt cohort | `received_at` selects `[since, until)` in UTC. Consumers must convert ET day boundaries using the applicable DST offset before querying. Late revisions remain in the same receipt cohort and cannot enter the next window. |
@@ -54,7 +55,8 @@ The request sink has 4,096 queued snapshots, one worker, batches of up to 128, a
 |---|---|
 | `provider_content_observed` | The coordinator decoded recognized generated text/reasoning/tool output at provider ingress. A stricter parser than routing's permissive commitment discriminator excludes role-only, usage-only, finish-only, DONE, malformed, and error frames. It recognizes the supported endpoint payload shapes and has a bounded nesting depth. Unknown shapes do not supply content evidence. |
 | `content_write_completed` | At least one recognized generated-content write completed locally. An earlier successful content write survives a later failed write. For sealed responses the observation occurs after the encrypted event/envelope write to the outer writer, not when plaintext was buffered. |
-| `egress_completed` | The endpoint's successful terminal/body egress stamp exists and no failed/short client write or local sealing error occurred. It is local completion evidence, not acknowledgment from OpenRouter. |
+| `response_terminal` | The first recognized completed, incomplete or error response terminal whose entire write succeeded locally. Matching repeats are idempotent; contradictory terminals set sticky `evidence_conflict`, including within coalesced SSE groups. Missing historical values and unrecognized shapes remain unknown. This field does not claim provider completion or upstream receipt. |
+| `egress_completed` | A recognized response terminal/body was written successfully and no failed/short client write or local sealing error occurred. It can accompany an incomplete/error terminal; only a `completed` terminal can support completed request classification. Sealed responses are observed after the outer encrypted write. |
 | `client_departed` | The request context was canceled by handler return, or a relay recorded departure. It does not infer why the client left. A later provider completion remains independently visible. |
 | `client_write_error`, `egress_error` | A client write failed/was short, or local sealed transport failed to encode output. These prevent a completion claim. They do not erase earlier successful content egress. |
 | `attempts[].provider_complete_observed` | A matched complete frame arrived, independent of whether terminal arbitration accepted it. A discarded completion never proves delivered content or selected-winner completion. |
@@ -62,9 +64,9 @@ The request sink has 4,096 queued snapshots, one worker, batches of up to 128, a
 | `response_progress` | `no_content_observed`, `content_observed`, or `provider_completed`; receipt-only records begin `unknown`. This dimension is provider progress, not client delivery. |
 | Attempt dispatch | `write_submitted` records writer submission; `write_completed` records successful completion of the socket-write call; `provider_accepted` records the existing acknowledgment. An interrupted write has ambiguous provider receipt. No field proves engine admission. |
 
-The summary `termination` follows deterministic precedence: unfinished handler → `in_progress`; inconsistent evidence → `unknown`; observed departure → `client_departure`; write/sealing error → `interrupted_response`; provider completed plus complete local egress and 2xx → `completed`; HTTP error → `rejected`; observed content or provider error without complete response → `interrupted_response`; otherwise → `unknown`. Underlying dimensions remain available.
+The summary `termination` follows deterministic precedence: unfinished handler → `in_progress`; inconsistent evidence → `unknown`; observed departure → `client_departure`; write/sealing error → `interrupted_response`; provider completed plus a `completed` response terminal, complete local egress and 2xx → `completed`; HTTP error → `rejected`; observed content, provider error, a known handler panic, or an incomplete/error response terminal without complete response → `interrupted_response`; otherwise → `unknown`. Underlying dimensions remain available.
 
-A non-streaming provider may emit content and then fail while the client receives only an error body. That request is rejected with provider progress, with `content_write_completed=false`. A zero-token completion is completed if its provider terminal and endpoint egress contract complete successfully. A speculative loser's refusal/error cannot override a winner's completion.
+A non-streaming provider may emit content and then fail while the client receives only an error body. That request is rejected with provider progress, with `content_write_completed=false`. A zero-token completion is completed if its provider terminal and endpoint egress contract complete successfully. Native Responses pass-through observes its actual terminal events; `response.incomplete` and response-error terminals cannot become completed merely because the provider ended or the handler returned. A speculative loser's refusal/error cannot override a winner's completion.
 
 Attempt finalization uses the existing idempotent handler/terminal lifecycle, including its 31-second missing-terminal fallback. Compact observers preserve the profiler-off `RemovePending`/settlement arbitration; they claim evidence only after winning that existing ownership boundary. Heavy profiling retains its existing earlier terminal claims. Evidence arriving after an attempt's existing finalization/retention boundary is not retroactively invented. Pending or abandoned receipts remain `in_progress`/unknown when terminal persistence is lost. There is no timeout-based fabrication of success or rejection.
 
@@ -88,7 +90,7 @@ A raw historical `dispatch_exhausted` can represent a retained real provider err
 ## Consistency and failure modes
 
 1. The coordinator UUID is the primary key. Monotonically increasing revisions enrich one row. Duplicate identical revisions and stale revisions do not count twice.
-2. Same-revision conflicting payloads or attempted receipt/endpoint identity changes set sticky `evidence_conflict`. Both stores preserve the original identity. Readers must surface conflict, not choose a last row arbitrarily.
+2. Contradictory accepted response terminals, same-revision conflicting payloads or attempted receipt/endpoint identity changes set sticky `evidence_conflict`. Both stores preserve the original identity. Readers must surface conflict, not choose a last row arbitrarily.
 3. Missing old rows do not become zero requests. Missing profiles do not remove ledger observations. Missing provider terminals stay `no_terminal`; a received but unowned completion stays explicitly `unknown`; heavy profiling remains independently sampled/disabled.
 4. `GET /v1/admin/request-outcomes` requires existing admin authorization and returns an indexed bounded received cohort, a truncation flag, schema version, coverage label, and current-process sink counters. Store failures return 503, never an empty successful list. A full page must be narrowed before exact counts are claimed.
 5. Process counters count observed receipts and persistence snapshots, not durable unique rows. Snapshot failures, queued work and restarts prevent traffic-wide denominator claims. Multi-process/historical coverage needs independent reconciliation; this API does not pretend otherwise.

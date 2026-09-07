@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-07 · commit `46a65e203`
+> Last updated: 2026-09-07 · commit `a5174aeb4`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -107,6 +107,14 @@ Without it kernel-backed tests fail or silently exercise a different kernel
 set than production. To run a subset: `cd provider-swift && swift test
 --skip-build --filter <Suite>` after `make provider-test` has staged the
 metallib once.
+
+Tests that change process-wide MLX settings must use Swift Testing's
+`#expect(processExitsWith: .success)` child-process boundary. Restoring an
+environment variable does not reset MLX's cached value, and `.serialized`
+does not isolate other suites. See `StartCommandTests.defaultApplyProjectsSettings`
+in `provider-swift/Tests/DarkbloomCLITests/StartCommandTests.swift` and
+`GPUEnforcementTests.requireMetalPinsGPU` in
+`provider-swift/Tests/ProviderCoreTests/GPUEnforcementTests.swift`.
 
 **Nested `libs/mlx-swift-lm` suites.** The paged-KV correctness gates live in
 the submodule, not in `provider-swift/`. Build them once, stage the metallib,

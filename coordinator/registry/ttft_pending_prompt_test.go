@@ -3,6 +3,8 @@ package registry
 import (
 	"math"
 	"testing"
+
+	"github.com/eigeninference/d-inference/coordinator/protocol"
 )
 
 // These are deterministic synthetic workload comparisons, not provider timing
@@ -108,9 +110,25 @@ func TestTTFTPendingPromptCacheWorkKeepsProxy(t *testing.T) {
 	resetCalibrator(t)
 	reg := New(testLogger())
 	const model = "pending-cache"
+	if err := reg.ConfigureCacheRouting(generationTestConfig(CacheRoutingOn)); err != nil {
+		t.Fatal(err)
+	}
 	p := calibrationTestProvider(t, reg, "cache-box", model, 100, 1000)
-	pr := &PendingRequest{RequestID: "cached-ahead", Model: model, EstimatedPromptTokens: 4000, RequestedMaxTokens: 1}
-	pr.setCacheRoutingParticipates(true)
+	capability := exactTestCapability("11111111-1111-1111-1111-111111111111")
+	capability.ModelID = model
+	p.mu.Lock()
+	p.PrefixCacheProtocol = 2
+	p.PrefixCacheV2Models = map[string]protocol.PrefixCacheV2Capability{model: capability}
+	p.mu.Unlock()
+	pr := &PendingRequest{RequestID: "cached-ahead", Model: model, EstimatedPromptTokens: 4000, RequestedMaxTokens: 1,
+		CachePlan: exactTestPlan(exactTestAnchor(16, "c"))}
+	if err := prepareBoundTestCacheAttempt(reg, pr, p); err != nil {
+		t.Fatal(err)
+	}
+	defer reg.ForgetCacheAttempt(pr)
+	if !pr.CacheRoutingParticipates() {
+		t.Fatal("fixture did not prepare an authenticated cache attempt")
+	}
 	p.AddPending(pr)
 	_, _, _, got, known := reg.QuickCapacityCheckWithTTFTForRequest(model, 100, 1, RequestTraits{}, false)
 	if !known || got.Milliseconds() != 210 {

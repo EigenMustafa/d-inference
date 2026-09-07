@@ -69,6 +69,7 @@ public enum ThroughputSweep {
         decodePromptTokens: Int = defaultDecodePromptTokens,
         decodeIterations: Int = defaultDecodeIterations,
         kvBackend: EngineV2KVBackendSelection = .auto,
+        kvQuantization: EngineV2KVQuantizationSelection = .native,
         gemmaOptimizations: GemmaOptimizationSettings,
         hardware: HardwareInfo,
         efficiency: Double = DecodeBandwidthModel.defaultBandwidthEfficiency
@@ -107,8 +108,9 @@ public enum ThroughputSweep {
 
         let quantBits = readQuantBits(modelDirectory: modelDirectory)
 
-        let prefill = await measurePrefill(
-            container: container, baseTokens: baseTokens, lengths: promptLengths)
+        let prefill = await measurePrefillForSelection(kvQuantization: kvQuantization) {
+            await measurePrefill(container: container, baseTokens: baseTokens, lengths: promptLengths)
+        }
         let decodeOutcome = try await measureDecode(
             container: container,
             modelID: modelID,
@@ -120,7 +122,7 @@ public enum ThroughputSweep {
             weightBytes: facts.weightBytes,
             isVLM: isVLM,
             modelDirectory: modelDirectory,
-            kvBackend: kvBackend
+            kvBackend: kvBackend, kvQuantization: kvQuantization
         )
         let decode = decodeOutcome.samples
 
@@ -141,7 +143,7 @@ public enum ThroughputSweep {
 
         let notes = makeNotes(
             hardware: hardware, efficiency: efficiency, derived: derived,
-            kvBackend: kvBackend, resolvedBackends: decodeOutcome.resolvedBackends,
+            kvBackend: kvBackend, kvQuantization: kvQuantization, resolvedBackends: decodeOutcome.resolvedBackends,
             coverage: coverage)
 
         // Only when NOTHING ran. A failure alongside cells that did resolve is
@@ -163,14 +165,15 @@ public enum ThroughputSweep {
                 gpuCores: hardware.gpuCores,
                 memoryBandwidthGbs: hardware.memoryBandwidthGbs
             ),
-            prefill: prefill,
+            prefill: prefill.samples,
+            prefillExecution: prefill.execution,
             decode: decode,
             derived: derived,
             notes: notes,
             gemmaOptimizations: BenchmarkGemmaOptimizations(
                 settings: gemmaOptimizations),
             kvBackend: ThroughputSweepReport.KVBackend(
-                selection: kvBackend.rawValue,
+                selection: kvBackend.rawValue, quantizationSelection: kvQuantization.rawValue,
                 resolved: decodeOutcome.resolvedBackends),
             decodeConstructionFailure: constructionFailure,
             decodeCoverage: coverage
@@ -333,7 +336,8 @@ public enum ThroughputSweep {
         weightBytes: Int,
         isVLM: Bool,
         modelDirectory: URL,
-        kvBackend: EngineV2KVBackendSelection
+        kvBackend: EngineV2KVBackendSelection,
+        kvQuantization: EngineV2KVQuantizationSelection = .native
     ) async throws -> DecodeOutcome {
         let sizes = batchSizes.filter { $0 > 0 }.sorted()
         guard !sizes.isEmpty else { return DecodeOutcome() }
@@ -355,7 +359,7 @@ public enum ThroughputSweep {
                 container: container, modelID: modelID, baseTokens: baseTokens,
                 batchSize: batchSize, decodeTokens: genTokens, promptLen: promptLen,
                 weightBytes: weightBytes, isVLM: isVLM,
-                modelDirectory: modelDirectory, kvBackend: kvBackend)
+                modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization)
             return (warmUp.constructionFailure, warmUp.submitFailure)
         }
 
@@ -365,7 +369,7 @@ public enum ThroughputSweep {
                     container: container, modelID: modelID, baseTokens: baseTokens,
                     batchSize: batchSize, decodeTokens: genTokens, promptLen: promptLen,
                     weightBytes: weightBytes, isVLM: isVLM,
-                    modelDirectory: modelDirectory, kvBackend: kvBackend)
+                    modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization)
                 if outcome.record(resolved), let resolved {
                     log("  engine resolved kv backend: \(resolved)")
                 }
@@ -427,7 +431,8 @@ public enum ThroughputSweep {
         weightBytes: Int,
         isVLM: Bool,
         modelDirectory: URL,
-        kvBackend: EngineV2KVBackendSelection
+        kvBackend: EngineV2KVBackendSelection,
+        kvQuantization: EngineV2KVQuantizationSelection = .native
     ) async -> (
         totalTokens: Int, maxElapsed: Duration, resolvedBackend: String?,
         constructionFailure: String?, submitFailure: String?,
@@ -465,7 +470,7 @@ public enum ThroughputSweep {
                     kvBytesCapacity: kvCapacity,
                     maxConcurrentRequests: max(batchSize, 1),
                     kvBudget: BenchmarkMemoryBudget.shared,
-                    kvBackend: kvBackend)
+                    kvBackend: kvBackend, kvQuantization: kvQuantization)
                 return EngineParts(
                     engine: build.engine,
                     resolvedBackend: build.resolvedKVBackendDescriptor)
@@ -649,10 +654,16 @@ public enum ThroughputSweep {
         efficiency: Double,
         derived: ThroughputSweepReport.Derived,
         kvBackend: EngineV2KVBackendSelection,
+        kvQuantization: EngineV2KVQuantizationSelection = .native,
         resolvedBackends: [String],
         coverage: ThroughputSweepReport.DecodeCoverage
     ) -> [String] {
         var notes: [String] = []
+        if kvQuantization != .native {
+            notes.append("Prefill omitted for KV format=\(kvQuantization.rawValue): use --scheduler-prefill --kv-backend paged --kv-quantization \(kvQuantization.rawValue) to measure actual production quantized prefill.")
+        } else {
+            notes.append("Prefill samples are direct model forwards with the model's native cache; the selected production KV backend describes decode cells only. Use --scheduler-prefill to measure production prefill.")
+        }
         notes.append(
             "kv backend: selection=\(kvBackend.rawValue), resolved="
                 + (resolvedBackends.isEmpty

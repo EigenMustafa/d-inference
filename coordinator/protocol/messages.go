@@ -326,7 +326,7 @@ type BackendSlotCapacity struct {
 	ActiveTokenBudgetUsed int64   `json:"active_token_budget_used,omitempty"` // tokens reserved by active requests (prompt + max_output)
 	ActiveTokenBudgetMax  int64   `json:"active_token_budget_max,omitempty"`  // maximum token budget for this slot
 	QueuedTokenBudget     int64   `json:"queued_token_budget,omitempty"`      // tokens reserved by queued requests
-	KVBytesPerToken       int64   `json:"kv_bytes_per_token,omitempty"`       // per-token KV cache memory cost in bytes (provider-side only)
+	KVBytesPerToken       int64   `json:"kv_bytes_per_token,omitempty"`       // resolved slot KV bytes/token, including quantization metadata; used for pooled admission
 	ModelLoadTimeMS       int64   `json:"model_load_time_ms,omitempty"`       // measured cold-start load time (ms) for the model in this slot; omitted when unmeasured
 
 	// KVBackend names the KV-cache backend this slot's engine was actually

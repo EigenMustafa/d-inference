@@ -86,6 +86,7 @@ public enum SchedulerPrefillBenchmark {
         promptLengths: [Int],
         iterations: Int,
         kvBackend: EngineV2KVBackendSelection = .auto,
+        kvQuantization: EngineV2KVQuantizationSelection = .native,
         gemmaOptimizations: GemmaOptimizationSettings
     ) async throws -> SchedulerPrefillBenchmarkReport {
         let lengths = promptLengths.filter { $0 > 1 }.sorted()
@@ -148,7 +149,7 @@ public enum SchedulerPrefillBenchmark {
             weightBytes: facts.weightBytes,
             isVLM: isVLM,
             modelDirectory: modelDirectory,
-            kvBackend: kvBackend
+            kvBackend: kvBackend, kvQuantization: kvQuantization
         )
 
         var samples: [SchedulerPrefillBenchmarkReport.Sample] = []
@@ -160,7 +161,7 @@ public enum SchedulerPrefillBenchmark {
             _ = try await measureOne(
                 container: container, modelID: modelID, baseTokens: baseTokens,
                 promptTokens: length, iteration: 0, weightBytes: facts.weightBytes,
-                isVLM: isVLM, modelDirectory: modelDirectory, kvBackend: kvBackend)
+                isVLM: isVLM, modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization)
         }
         for length in lengths {
             for iteration in 1 ... iterations {
@@ -173,7 +174,7 @@ public enum SchedulerPrefillBenchmark {
                     weightBytes: facts.weightBytes,
                     isVLM: isVLM,
                     modelDirectory: modelDirectory,
-                    kvBackend: kvBackend
+                    kvBackend: kvBackend, kvQuantization: kvQuantization
                 )
                 if !resolved.contains(sample.resolvedKVBackend) {
                     resolved.append(sample.resolvedKVBackend)
@@ -194,7 +195,7 @@ public enum SchedulerPrefillBenchmark {
             gemmaOptimizations: BenchmarkGemmaOptimizations(
                 settings: gemmaOptimizations),
             kvBackend: BenchmarkKVBackend(
-                selection: kvBackend.rawValue, resolved: resolved),
+                selection: kvBackend.rawValue, quantizationSelection: kvQuantization.rawValue, resolved: resolved),
             soloPrefillStripeTokens: effectiveSoloPrefillStripeTokens,
             samples: samples
         )
@@ -209,7 +210,8 @@ public enum SchedulerPrefillBenchmark {
         weightBytes: Int,
         isVLM: Bool,
         modelDirectory: URL,
-        kvBackend: EngineV2KVBackendSelection
+        kvBackend: EngineV2KVBackendSelection,
+        kvQuantization: EngineV2KVQuantizationSelection = .native
     ) async throws -> SchedulerPrefillBenchmarkReport.Sample {
         // Same KV-ceiling derivation as a single-model serving slot; far
         // above what one row needs, so admission never binds.
@@ -238,7 +240,7 @@ public enum SchedulerPrefillBenchmark {
                 kvBytesCapacity: kvCapacity,
                 maxConcurrentRequests: 1,
                 kvBudget: BenchmarkMemoryBudget.shared,
-                kvBackend: kvBackend)
+                kvBackend: kvBackend, kvQuantization: kvQuantization)
             return EngineParts(
                 engine: build.engine,
                 resolvedBackend: build.resolvedKVBackendDescriptor)

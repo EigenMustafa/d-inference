@@ -1822,11 +1822,7 @@ func freeMemoryAdmits(snap *routingSnapshot, reqPromptTokens, reqMaxTokens int) 
 		// provider's heartbeat. Avoid double-counting active/queued backend
 		// budgets that are still present in the coordinator pending set until
 		// completion/cancellation removes them.
-		coordinatorExtra := int64(snap.pendingMaxTokens) - committedTokenBudget(snap)
-		if coordinatorExtra < 0 {
-			coordinatorExtra = 0
-		}
-		if snap.activeTokenBudgetUsed+snap.queuedTokenBudget+coordinatorExtra+requestTokens > snap.activeTokenBudgetMax {
+		if requestTokens < 0 || requestTokens > remainingSlotTokenBudget(snap) {
 			return false
 		}
 		// The per-slot max encodes this model's own context/KV ceiling. Through

@@ -1,0 +1,3 @@
+# Preserve exact chat-template rendering and captured CLI output.
+inputs/**/*.txt whitespace=-blank-at-eof
+validation/kv-quality-cli-help1.txt whitespace=-blank-at-eof

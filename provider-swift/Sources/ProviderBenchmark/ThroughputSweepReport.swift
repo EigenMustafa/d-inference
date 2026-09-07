@@ -72,6 +72,9 @@ public struct ThroughputSweepReport: Codable, Sendable {
         public let resolvedKVBackend: String?
         /// Raw host-observed token timing. Nil on legacy/synthesized samples.
         public let decodeTiming: DecodeTiming?
+        /// Includes this decode cell's prompt prefills, with separate warmup
+        /// engines excluded. These are graph-built layer-row decisions.
+        public let quantizedPrefill: BenchmarkQuantizedPrefillReceipt?
 
         public init(
             batchSize: Int,
@@ -80,7 +83,8 @@ public struct ThroughputSweepReport: Codable, Sendable {
             perSequenceTokensPerSecond: Double,
             elapsedMs: Double,
             resolvedKVBackend: String? = nil,
-            decodeTiming: DecodeTiming? = nil
+            decodeTiming: DecodeTiming? = nil,
+            quantizedPrefill: BenchmarkQuantizedPrefillReceipt? = nil
         ) {
             self.batchSize = batchSize
             self.decodeTokensPerSequence = decodeTokensPerSequence
@@ -89,6 +93,7 @@ public struct ThroughputSweepReport: Codable, Sendable {
             self.elapsedMs = elapsedMs
             self.resolvedKVBackend = resolvedKVBackend
             self.decodeTiming = decodeTiming
+            self.quantizedPrefill = quantizedPrefill
         }
     }
 

@@ -110,6 +110,9 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .long, help: "Experimental full-attention KV format: native|int4|k8v4|int8 (default native). Non-native requires --kv-backend paged and --sweep, --scheduler-prefill, --arrival-invariance --teacher-forced-input or --kv-quality-input. Quantized --sweep omits prefill; use --scheduler-prefill to measure it.")
     var kvQuantization = "native"
 
+    @Option(name: .long, help: "Packed KV benchmark prefill policy: direct or opportunistic. Requires packed paged KV and --sweep, --scheduler-prefill or --kv-quality-input. Default direct; actual route decisions and fallback counts are reported.")
+    var quantizedPrefill: String?
+
     @Flag(name: .long, help: """
         Run the cold-prefill TTFT benchmark through the production \
         ContinuousBatchingV2 engine and print a JSON report (engine-internal \
@@ -190,6 +193,10 @@ struct Benchmark: AsyncParsableCommand {
             throw ExitCode(2)
         }
         if let error = kvQuantizationOptionError() {
+            printError(error)
+            throw ExitCode(2)
+        }
+        if let error = quantizedPrefillOptionError() {
             printError(error)
             throw ExitCode(2)
         }

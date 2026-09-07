@@ -70,10 +70,12 @@ public enum ThroughputSweep {
         decodeIterations: Int = defaultDecodeIterations,
         kvBackend: EngineV2KVBackendSelection = .auto,
         kvQuantization: EngineV2KVQuantizationSelection = .native,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct,
         gemmaOptimizations: GemmaOptimizationSettings,
         hardware: HardwareInfo,
         efficiency: Double = DecodeBandwidthModel.defaultBandwidthEfficiency
     ) async throws -> ThroughputSweepReport {
+        try BenchmarkQuantizedPrefillReceipt.validateSelection(quantization: kvQuantization, mode: quantizedPrefillMode)
         Memory.peakMemory = 0
         log("loading model \(modelID)")
         log("  path: \(modelDirectory.path)")
@@ -122,7 +124,8 @@ public enum ThroughputSweep {
             weightBytes: facts.weightBytes,
             isVLM: isVLM,
             modelDirectory: modelDirectory,
-            kvBackend: kvBackend, kvQuantization: kvQuantization
+            kvBackend: kvBackend, kvQuantization: kvQuantization,
+            quantizedPrefillMode: quantizedPrefillMode
         )
         let decode = decodeOutcome.samples
 
@@ -337,7 +340,8 @@ public enum ThroughputSweep {
         isVLM: Bool,
         modelDirectory: URL,
         kvBackend: EngineV2KVBackendSelection,
-        kvQuantization: EngineV2KVQuantizationSelection = .native
+        kvQuantization: EngineV2KVQuantizationSelection = .native,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct
     ) async throws -> DecodeOutcome {
         let sizes = batchSizes.filter { $0 > 0 }.sorted()
         guard !sizes.isEmpty else { return DecodeOutcome() }
@@ -359,17 +363,19 @@ public enum ThroughputSweep {
                 container: container, modelID: modelID, baseTokens: baseTokens,
                 batchSize: batchSize, decodeTokens: genTokens, promptLen: promptLen,
                 weightBytes: weightBytes, isVLM: isVLM,
-                modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization)
+                modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization,
+                quantizedPrefillMode: quantizedPrefillMode)
             return (warmUp.constructionFailure, warmUp.submitFailure)
         }
 
         for iteration in 1 ... repetitions {
             for batchSize in sizes {
-                let (totalTokens, maxElapsed, resolved, failure, submitFailure, timing) = await runDecodeBatch(
+                let (totalTokens, maxElapsed, resolved, failure, submitFailure, timing, quantizedPrefill) = await runDecodeBatch(
                     container: container, modelID: modelID, baseTokens: baseTokens,
                     batchSize: batchSize, decodeTokens: genTokens, promptLen: promptLen,
                     weightBytes: weightBytes, isVLM: isVLM,
-                    modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization)
+                    modelDirectory: modelDirectory, kvBackend: kvBackend, kvQuantization: kvQuantization,
+                    quantizedPrefillMode: quantizedPrefillMode)
                 if outcome.record(resolved), let resolved {
                     log("  engine resolved kv backend: \(resolved)")
                 }
@@ -403,7 +409,8 @@ public enum ThroughputSweep {
                     perSequenceTokensPerSecond: perSeq,
                     elapsedMs: secs * 1000,
                     resolvedKVBackend: resolved,
-                    decodeTiming: timing
+                    decodeTiming: timing,
+                    quantizedPrefill: quantizedPrefill
                 ))
             }
         }
@@ -432,11 +439,13 @@ public enum ThroughputSweep {
         isVLM: Bool,
         modelDirectory: URL,
         kvBackend: EngineV2KVBackendSelection,
-        kvQuantization: EngineV2KVQuantizationSelection = .native
+        kvQuantization: EngineV2KVQuantizationSelection = .native,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct
     ) async -> (
         totalTokens: Int, maxElapsed: Duration, resolvedBackend: String?,
         constructionFailure: String?, submitFailure: String?,
-        timing: ThroughputSweepReport.DecodeTiming?
+        timing: ThroughputSweepReport.DecodeTiming?,
+        quantizedPrefill: BenchmarkQuantizedPrefillReceipt?
     ) {
         // The engine's KV admission ceiling: the same unified-memory budget a
         // single-model provider slot would be granted. Far above what these
@@ -470,7 +479,8 @@ public enum ThroughputSweep {
                     kvBytesCapacity: kvCapacity,
                     maxConcurrentRequests: max(batchSize, 1),
                     kvBudget: BenchmarkMemoryBudget.shared,
-                    kvBackend: kvBackend, kvQuantization: kvQuantization)
+                    kvBackend: kvBackend, kvQuantization: kvQuantization,
+                    quantizedPrefillMode: quantizedPrefillMode)
                 return EngineParts(
                     engine: build.engine,
                     resolvedBackend: build.resolvedKVBackendDescriptor)
@@ -481,7 +491,7 @@ public enum ThroughputSweep {
             // Return the reason so the report and the process exit status can
             // both name it instead of showing a bare curve of zeros.
             log("  engine construction failed: \(error)")
-            return (0, .zero, nil, "\(error)", nil, nil)
+            return (0, .zero, nil, "\(error)", nil, nil, nil)
         }
         let engine = parts.engine
 
@@ -554,10 +564,19 @@ public enum ThroughputSweep {
             rows: rows.compactMap(\.timing).sorted { $0.row < $1.row },
             peakMemoryBytes: peakMemoryBytes, decodePromptTokens: promptLen)
         await engine.shutdown()
+        let quantizedPrefill: BenchmarkQuantizedPrefillReceipt?
+        do {
+            quantizedPrefill = try BenchmarkQuantizedPrefillReceipt.capture(
+                engine: engine, quantization: kvQuantization, mode: quantizedPrefillMode,
+                successfulTerminalControls: cell.submitFailure == nil)
+        } catch {
+            return (cell.totalTokens, cell.maxElapsed, parts.resolvedBackend, nil,
+                    "quantized prefill receipt unavailable: \(error)", timing, nil)
+        }
         return (
             totalTokens: cell.totalTokens, maxElapsed: cell.maxElapsed,
             resolvedBackend: parts.resolvedBackend, constructionFailure: nil,
-            submitFailure: cell.submitFailure, timing: timing)
+            submitFailure: cell.submitFailure, timing: timing, quantizedPrefill: quantizedPrefill)
     }
 
     // MARK: - Helpers

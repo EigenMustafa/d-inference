@@ -206,6 +206,7 @@ extension EngineV2Bridge {
             // prompt tokens; see EngineV2Bridge.recordPrefillSample). Feeds
             // the coordinator's prefill-honest TTFT estimation.
             observedPrefillTps: observedPrefillTpsEwma,
+            executionIdentity: executionIdentity,
             activeTokenBudgetUsed: budgetUsed,
             activeTokenBudgetMax: budgetMax,
             queuedTokenBudget: 0,

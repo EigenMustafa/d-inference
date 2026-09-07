@@ -48,6 +48,7 @@ public enum KVQualityBenchmark {
         let modelDirectory: String
         let resolvedBackend: String
         let kvQuantizationIdentity: String?
+        let quantizedPrefill: BenchmarkQuantizedPrefillReceipt?
         let stopTokenIDs: [Int]
         let expectedTextMatchSource = "production_streamed_text"
         let declaredModelType: String?
@@ -77,9 +78,11 @@ public enum KVQualityBenchmark {
 
     public static func run(
         modelID: String, modelDirectory: URL, inputURL: URL, backend: String,
-        kvQuantization: EngineV2KVQuantizationSelection = .native
+        kvQuantization: EngineV2KVQuantizationSelection = .native,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct
     ) async throws -> (json: String, controlsPassed: Bool) {
         try TeacherForcedBenchmark.validateBackend(backend)
+        try BenchmarkQuantizedPrefillReceipt.validateSelection(quantization: kvQuantization, mode: quantizedPrefillMode)
         let (input, inputData) = try KVQualityInput.read(inputURL)
         try input.validate(modelID: modelID)
         guard let verified = WeightHasher.computeHash(snapshotDir: modelDirectory, modelID: modelID),
@@ -105,7 +108,8 @@ public enum KVQualityBenchmark {
             container: container, tokenizer: tokenizer, verifiedWeightHash: verified,
             kvBytesCapacity: 1 << 30, maxConcurrentRequests: input.resolvedConcurrency, mtpEnabled: false,
             useProductionKVGrant: true, kvBackendConfig: backend,
-            kvQuantizationConfig: kvQuantization.rawValue, requirePersistentKey: false,
+            kvQuantizationConfig: kvQuantization.rawValue, quantizedPrefillMode: quantizedPrefillMode,
+            requirePersistentKey: false,
             environment: environment)
         do {
             let cache = await session.cacheSnapshot()
@@ -147,11 +151,15 @@ public enum KVQualityBenchmark {
             guard let after = WeightHasher.computeHash(snapshotDir: modelDirectory, modelID: modelID),
                 after == verified else { throw Failure.modelHashMismatch }
             let controlsPassed = results.allSatisfy { $0.issues.isEmpty && $0.error == nil }
+            let quantizedPrefill = try BenchmarkQuantizedPrefillReceipt.capture(
+                engine: session.rawEngine, quantization: kvQuantization, mode: quantizedPrefillMode,
+                successfulTerminalControls: controlsPassed)
             let report = Report(status: controlsPassed ? "observed" : "inconclusive", input: input,
                 inputSHA256: SHA256.hash(data: inputData).map { String(format: "%02x", $0) }.joined(),
                 beforeModelAggregateSHA256: verified, afterModelAggregateSHA256: after,
                 executableSHA256: executable, metallibSHA256: metallib, modelDirectory: modelDirectory.path,
                 resolvedBackend: session.backend, kvQuantizationIdentity: session.kvQuantizationIdentity,
+                quantizedPrefill: quantizedPrefill,
                 stopTokenIDs: session.stopTokenIDs.sorted(), declaredModelType: declaration.modelType,
                 servingParserFormat: BenchmarkServingContent.parserFormat(modelType: declaration.modelType),
                 concurrency: input.resolvedConcurrency,

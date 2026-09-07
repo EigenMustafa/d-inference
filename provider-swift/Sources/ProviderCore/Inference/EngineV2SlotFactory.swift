@@ -155,6 +155,7 @@ enum EngineV2SlotFactory {
     /// callers use the empty value and execute only concrete production code.
     struct AssemblyOverrides {
         var gemmaMTPVerification: EngineV2BenchmarkMTPVerification? = nil
+        var quantizedPrefillMode: PagedQuantizedPrefillMode = .direct
         var promptContractID: String? = nil
         var completeCheckpointIdentity: CBv2CompleteCheckpointIdentity? = nil
         var pagedPreflight: (([CBv2LayerKind]) throws -> Void)? = nil
@@ -437,6 +438,7 @@ enum EngineV2SlotFactory {
                     maxConcurrentRequests: maxConcurrentRequests,
                     kvBackend: kvBackendSelection,
                     kvQuantization: kvQuantization,
+                    quantizedPrefillMode: assemblyOverrides.quantizedPrefillMode,
                     maxContextLength: sizing.maxContextLength > 0
                         ? sizing.maxContextLength : nil,
                     environment: environment,

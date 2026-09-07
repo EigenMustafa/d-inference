@@ -25,6 +25,7 @@ type ModelCapacity struct {
 // providerCapSnap is a per-provider snapshot collected under the registry
 // lock, then aggregated into ModelCapacity outside the lock.
 type providerCapSnap struct {
+	executionIdentity          string
 	model                      string
 	warm                       bool
 	running                    bool
@@ -136,12 +137,16 @@ func (r *Registry) ModelCapacitySnapshot() []ModelCapacity {
 			)
 
 			snap := providerCapSnap{
+				executionIdentity:     providerExecutionIdentityLocked(p, m.ID),
 				model:                 m.ID,
 				hasHeadroom:           hasHeadroom,
 				effectiveTPS:          decodeTPS,
 				prefillTPS:            prefillTPS,
 				activeRequests:        modelPending,
 				pooledBudgetRemaining: pooledRemaining,
+			}
+			if providerExecutionIdentityLocked(p, m.ID) != "" {
+				snap.effectiveTPS, snap.prefillTPS = 0, 0
 			}
 
 			// Check backend capacity for this model's slot.
@@ -156,13 +161,13 @@ func (r *Registry) ModelCapacitySnapshot() []ModelCapacity {
 					if slotActive > snap.activeRequests {
 						snap.activeRequests = slotActive
 					}
-					if slot.ObservedDecodeTPS > 0 {
+					if slot.ObservedDecodeTPS > 0 && executionSlotRatesCompatible(snap.executionIdentity, slot.State) {
 						snap.effectiveTPS = slot.ObservedDecodeTPS
 					}
 					// Prefer the measured per-slot prefill EWMA over the ×12
 					// fallback for the capacity TTFT estimate, mirroring the
 					// routing path (resolvePrefillTPS). 0 = unreported.
-					if slot.ObservedPrefillTPS > 0 {
+					if slot.ObservedPrefillTPS > 0 && executionSlotRatesCompatible(snap.executionIdentity, slot.State) {
 						snap.prefillTPS = slot.ObservedPrefillTPS
 					}
 					snap.activeTokenBudgetMax = slot.ActiveTokenBudgetMax
@@ -248,6 +253,9 @@ func (r *Registry) ModelCapacitySnapshot() []ModelCapacity {
 		}
 
 		// Estimate TTFT for this provider: prefill 500 tokens + backlog drain.
+		if s.executionIdentity != "" && s.prefillTPS <= 0 {
+			continue
+		} // unknown, not a zero-latency forecast
 		const defaultPromptTokens = 500
 		ttftMs := int64(0)
 		if s.prefillTPS > 0 {

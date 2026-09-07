@@ -134,6 +134,7 @@ extension EngineV2Factory {
         mtpConfig: CBv2MTPConfig = CBv2MTPConfig(),
         kvBackend: EngineV2KVBackendSelection = .auto,
         kvQuantization: EngineV2KVQuantizationSelection = .native,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct,
         maxContextLength: Int? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         pagedPreflightOverride: (([CBv2LayerKind]) throws -> Void)? = nil
@@ -145,6 +146,7 @@ extension EngineV2Factory {
             maxConcurrentRequests: maxConcurrentRequests,
             kvBackend: kvBackend,
             kvQuantization: kvQuantization,
+            quantizedPrefillMode: quantizedPrefillMode,
             maxContextLength: maxContextLength,
             environment: environment,
             residentPrefixCache: residentPrefixCache,

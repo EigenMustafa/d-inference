@@ -69,6 +69,7 @@ extension Benchmark {
                 decodeIterations: decodeIterations,
                 kvBackend: backend,
                 kvQuantization: try resolvedKVQuantizationSelection(),
+                quantizedPrefillMode: try resolvedQuantizedPrefillMode(),
                 gemmaOptimizations: gemmaOptimizations,
                 hardware: hardware
             )
@@ -158,6 +159,7 @@ extension Benchmark {
                 iterations: prefillIterations,
                 kvBackend: try resolvedKVBackendSelection(),
                 kvQuantization: try resolvedKVQuantizationSelection(),
+                quantizedPrefillMode: try resolvedQuantizedPrefillMode(),
                 gemmaOptimizations: gemmaOptimizations
             )
         }

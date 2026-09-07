@@ -21,7 +21,8 @@ extension Benchmark {
     func runKVQuality(modelID: String, directory: URL, inputPath: String) async throws {
         let result = try await KVQualityBenchmark.run(
             modelID: modelID, modelDirectory: directory, inputURL: URL(fileURLWithPath: inputPath),
-            backend: kvBackend, kvQuantization: try resolvedKVQuantizationSelection())
+            backend: kvBackend, kvQuantization: try resolvedKVQuantizationSelection(),
+            quantizedPrefillMode: try resolvedQuantizedPrefillMode())
         print(result.json) // run returns only after the post-measurement hash check
         if !result.controlsPassed { throw ExitCode(2) }
     }

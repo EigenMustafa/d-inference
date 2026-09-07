@@ -143,11 +143,12 @@ type Hardware struct {
 
 // ModelInfo describes a model available on a provider.
 type ModelInfo struct {
-	ID           string `json:"id"`
-	SizeBytes    int64  `json:"size_bytes"`
-	ModelType    string `json:"model_type"`
-	Quantization string `json:"quantization"`
-	WeightHash   string `json:"weight_hash,omitempty"` // SHA-256 fingerprint of weight files
+	ID                string `json:"id"`
+	SizeBytes         int64  `json:"size_bytes"`
+	ModelType         string `json:"model_type"`
+	Quantization      string `json:"quantization"`
+	WeightHash        string `json:"weight_hash,omitempty"`        // SHA-256 fingerprint of weight files
+	ExecutionIdentity string `json:"execution_identity,omitempty"` // declared cold execution policy; native/legacy omit
 	// IsVision is true when the provider can serve this build with image/video
 	// input (a VLM, detected via vision_config). v0.6.0+ only; older providers omit
 	// it (decodes to false) so they are never selected for media requests. The
@@ -313,13 +314,14 @@ type HeartbeatMessage struct {
 // BackendSlotCapacity describes the capacity state of a single backend slot
 // (one MLX-Swift in-process model serving one model).
 type BackendSlotCapacity struct {
-	Model              string `json:"model"`                     // model ID for this slot
-	State              string `json:"state"`                     // "running", "idle_shutdown", "crashed", "reloading"
-	NumRunning         int    `json:"num_running"`               // requests actively generating
-	NumWaiting         int    `json:"num_waiting"`               // requests queued in backend scheduler
-	MaxConcurrency     int    `json:"max_concurrency,omitempty"` // provider-reported concurrent request cap for this slot
-	ActiveTokens       int64  `json:"active_tokens"`             // sum of (prompt_tokens + completion_tokens) across running requests
-	MaxTokensPotential int64  `json:"max_tokens_potential"`      // sum of max_tokens across running requests (worst-case growth)
+	ExecutionIdentity  string `json:"execution_identity,omitempty"` // actual loaded performance identity, independent of weight quantization
+	Model              string `json:"model"`                        // model ID for this slot
+	State              string `json:"state"`                        // "running", "idle_shutdown", "crashed", "reloading"
+	NumRunning         int    `json:"num_running"`                  // requests actively generating
+	NumWaiting         int    `json:"num_waiting"`                  // requests queued in backend scheduler
+	MaxConcurrency     int    `json:"max_concurrency,omitempty"`    // provider-reported concurrent request cap for this slot
+	ActiveTokens       int64  `json:"active_tokens"`                // sum of (prompt_tokens + completion_tokens) across running requests
+	MaxTokensPotential int64  `json:"max_tokens_potential"`         // sum of max_tokens across running requests (worst-case growth)
 
 	ObservedDecodeTPS     float64 `json:"observed_decode_tps,omitempty"`      // EWMA of measured per-request decode TPS
 	ObservedPrefillTPS    float64 `json:"observed_prefill_tps,omitempty"`     // EWMA of measured per-request prefill TPS (admission→first token); omitted when unmeasured

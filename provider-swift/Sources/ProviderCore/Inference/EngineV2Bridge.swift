@@ -93,6 +93,7 @@ public actor EngineV2Bridge {
     let kvBytesPerToken: Int
     /// Immutable format read from the built backend; nil is native KV.
     public let kvQuantizationIdentity: String?
+    public let executionIdentity: String?
     /// Peak request-owned residency outside attention KV (Qwen recurrent
     /// committed + transactional conv/SSM generations). Zero preserves the
     /// historical attention-only charge.
@@ -310,6 +311,7 @@ public actor EngineV2Bridge {
         partialPrefillCap: Int? = nil,
         kvBytesPerToken: Int = 0,
         kvQuantizationIdentity: String? = nil,
+        executionIdentity: String? = nil,
         fixedRequestBytes: Int = 0,
         kvRoutingRequestOverheadBytes: Int = 0,
         kvRoutingWorkspaceBytes: @escaping @Sendable (Int, Int) -> Int? = { _, _ in 0 },
@@ -345,6 +347,9 @@ public actor EngineV2Bridge {
         self.partialPrefillCap = partialPrefillCap
         self.kvBytesPerToken = kvBytesPerToken
         self.kvQuantizationIdentity = kvQuantizationIdentity
+        self.executionIdentity = KVPerformanceIdentity.normalized(executionIdentity)
+            ?? KVPerformanceIdentity.actual(format: kvQuantizationIdentity,
+                prefillMode: (engine as? EngineV2)?.quantizedPrefillStatisticsSnapshot()?.mode ?? .direct)
         self.fixedRequestBytes = max(0, fixedRequestBytes)
         self.kvRoutingRequestOverheadBytes = max(0, kvRoutingRequestOverheadBytes)
         self.kvRoutingWorkspaceBytes = kvRoutingWorkspaceBytes

@@ -97,10 +97,24 @@ struct EngineV2KVQuantizationPolicyTests {
         #expect(backend.bytesCapacity == grant)
         #expect(backend.pool.bytesMaterialized == 0)
         #expect(backend.pool.config.layerDTypes == types)
+        #expect(backend.pool.config.quantizedPrefillMode == .direct)
         #expect(backend.pool.groupKey(forLayer: 0).quantization == format)
         #expect(backend.pool.groupKey(forLayer: 1).quantization == nil)
         #expect(backend.pool.groupKey(forLayer: 2) == backend.pool.groupKey(forLayer: 0))
         #expect(try backend.pool.groupKey(forLayer: 0).bytesPerToken() ==
             EngineV2Factory.fullKVBytesPerToken(layerKinds: kinds, dtypes: types, quantization: format))
+    }
+
+    @Test func typedBenchmarkOverrideReachesTheNativePoolWithoutChangingStorageIdentity() throws {
+        let kinds = [CBv2LayerKind(attention: .full, headDim: 64, kvHeads: 1, queryHeads: 4)]
+        let format = PagedKVQuantizationConfig()
+        let backend = try EngineV2Factory.makeSegmentedPagedBackend(
+            admittedGrantBytes: 64 << 20, layerKinds: kinds, layerDTypes: [.float32],
+            schedulerConfig: .init(maxConcurrentRequests: 1), maxContextLength: 4096,
+            maxBufferLength: 64 << 20, quantization: format,
+            quantizedPrefillMode: .opportunisticSDPA)
+        #expect(backend.pool.config.quantizedPrefillMode == .opportunisticSDPA)
+        #expect(backend.pool.config.quantization?.identity == format.identity)
+        #expect(backend.pool.bytesMaterialized == 0)
     }
 }

@@ -94,6 +94,7 @@ extension EngineV2Factory {
         maxConcurrentRequests: Int,
         kvBackend: EngineV2KVBackendSelection = .auto,
         kvQuantization: EngineV2KVQuantizationSelection = .native,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct,
         maxContextLength: Int? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         residentPrefixCache: CBv2PagedPrefixCacheConfig? = nil,
@@ -251,7 +252,8 @@ extension EngineV2Factory {
                     maxBufferLength: MLX.GPU.deviceInfo().maxBufferSize,
                     residentPrefixCache: modelCapabilities.supportsPrefixReuse
                         ? residentPrefixCache : nil,
-                    quantization: kvQuantization.configuration)
+                    quantization: kvQuantization.configuration,
+                    quantizedPrefillMode: quantizedPrefillMode)
                 let pagedCaches = paged.makeLayerCaches()
                 // Hybrid models number caches by model layer, while paged storage
                 // is dense over attending layers. Convert before indexing the pool.

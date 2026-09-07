@@ -16,7 +16,8 @@ extension EngineV2Factory {
         maxContextLength: Int?,
         maxBufferLength: Int,
         residentPrefixCache: CBv2PagedPrefixCacheConfig? = nil,
-        quantization: PagedKVQuantizationConfig? = nil
+        quantization: PagedKVQuantizationConfig? = nil,
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct
     ) throws -> PagedKVBackend {
         try PagedKVBackend(
             layerKinds: layerKinds,
@@ -30,7 +31,8 @@ extension EngineV2Factory {
                 maxBufferLength: maxBufferLength,
                 segmentSizeBytes: 64 << 20,
                 layerDTypes: layerDTypes,
-                quantization: quantization),
+                quantization: quantization,
+                quantizedPrefillMode: quantizedPrefillMode),
             slabCommitment: .atFirstAdmission,
             residentPrefixCache: residentPrefixCache)
     }

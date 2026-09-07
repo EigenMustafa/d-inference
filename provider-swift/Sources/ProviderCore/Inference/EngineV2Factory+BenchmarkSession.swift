@@ -214,6 +214,7 @@ extension EngineV2Factory {
         kvBudget: GlobalKVCacheBudget? = nil,
         kvBackendConfig: String = "auto",
         kvQuantizationConfig: String = "native",
+        quantizedPrefillMode: PagedQuantizedPrefillMode = .direct,
         requirePersistentKey: Bool = true,
         persistentTestNamespace: SSDPersistentTestKeyNamespace? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -297,7 +298,8 @@ extension EngineV2Factory {
                 kvQuantizationConfig: kvQuantizationConfig,
                 weightHash: verifiedWeightHash, specDecPreparation: preparation,
                 preparedModel: prepared,
-                assemblyOverrides: .init(gemmaMTPVerification: gemmaMTPVerification),
+                assemblyOverrides: .init(gemmaMTPVerification: gemmaMTPVerification,
+                    quantizedPrefillMode: quantizedPrefillMode),
                 environment: effectiveEnvironment,
                 persistentTestNamespace: persistentTestNamespace)
         } catch {

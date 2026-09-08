@@ -41,8 +41,13 @@ const pc = mark('p-c'), pp = mark('p-p'), px = mark('p-x');
 // `arrows` is 'auto' — heads wherever the picture is narrow enough to read them, which
 // is syncArrows' judgement — or 'all' and 'read', the reader overruling it in either
 // direction: on every wire, or only on the wire being read.
+// `key` is whether the idle panel shows the legend or collapses to the button that
+// brings it back. It is read once and then it is a 300px box in the corner standing on
+// top of the picture, which is the thing full screen was asked to give back — so
+// entering full screen collapses it and leaving reopens it.
 const state = { q: '', ns: '', auth: '', dep: '', mode: '', ont: '',
-  view: 'all', open: null, table: null, wide: false, focus: null, arrows: 'auto' };
+  view: 'all', open: null, table: null, wide: false, focus: null, arrows: 'auto',
+  key: true };
 
 // showProse is the single gate every curated string passes through, so adding a
 // prose field to the page cannot accidentally survive the code view.
@@ -1434,8 +1439,27 @@ function drawInfo(n, pinned) {
   const host = document.getElementById('ginfo');
   host.textContent = '';
   host.classList.toggle('pinned', !!pinned);
+  // The idle panel is a legend — three access modes, four indirections, the foreign-key
+  // note — and a legend is worth reading once. After that it is the corner of the
+  // picture spent on text that has stopped saying anything new, so it folds down to its
+  // own heading and a button. Only the idle panel folds: a hovered or focused node is an
+  // answer to a question just asked, and hiding that would be hiding the point.
+  host.classList.toggle('lean', !n && !state.key);
   if (!n) {
-    host.append(el('h4', null, 'The whole system at once'));
+    const head = el('div', 'row');
+    head.append(el('h4', null, 'The whole system at once'));
+    const fold = el('button', 'x', state.key ? '−' : '+');
+    fold.title = state.key
+      ? 'Fold the key away and give the corner back to the picture'
+      : 'What the colours, the dashes and the arcs mean';
+    fold.setAttribute('aria-label', fold.title);
+    fold.setAttribute('aria-expanded', String(state.key));
+    // styleGraph is what draws this panel, so the toggle asks for a restyle rather than
+    // redrawing the panel behind its back — one path in, whatever moved the state.
+    fold.onclick = () => { state.key = !state.key; styleGraph(); };
+    head.append(fold);
+    host.append(head);
+    if (!state.key) return;
     host.append(el('div', 'k', 'Every endpoint sits inside its namespace, every dependency inside ' +
       'its category, and both inside the process that owns them. Hover for what reaches what; ' +
       'click a node to shadow everything it does not touch and pin its detail here. Edge colour ' +
@@ -1966,6 +1990,12 @@ function resizeView() {
 for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) {
   document.addEventListener(ev, () => {
     document.getElementById('gfull').textContent = isFull() ? 'Exit full screen' : 'Full screen';
+    // The same reframing that refits the view also decides the legend: asking for the
+    // whole screen is asking for the picture, and the key standing in its corner is the
+    // one thing on that screen which is not the picture. Leaving reopens it, because a
+    // reader who never touched the fold should not find the page's own account of its
+    // colours missing afterwards.
+    state.key = !isFull();
     // Entering or leaving full screen is a deliberate reframing, so refit rather
     // than preserving a zoom chosen for the other size.
     requestAnimationFrame(fit);

@@ -388,10 +388,59 @@ test('full screen toggles, relabels its own control, and refits', async t => {
   await frame(p);
   assert.ok(Number.isFinite(p.peek('view.k')) && p.peek('view.k') > 0, 'the refit produced no scale');
 
+  // The legend folds with the reframing: the whole screen was asked for so the picture
+  // could have it, and the key is the one thing on that screen that is not the picture.
+  assert.equal(p.peek('state.key'), false, 'full screen left the key standing in the corner');
+  assert.ok(p.$('#ginfo').classList.contains('lean'),
+    'the folded panel still holds the width of the unfolded one');
+  assert.equal(p.$$('#ginfo ul').length, 0, 'the folded key still lists the modes');
+
   p.press('#gfull');
   assert.equal(p.doc.fullscreenElement, null, 'exiting full screen did nothing');
   assert.equal(p.text('#gfull'), 'Full screen');
   await frame(p);
+  // And unfolds on the way out: a reader who never touched the fold should not find the
+  // page's own account of its colours missing afterwards.
+  assert.equal(p.peek('state.key'), true, 'leaving full screen left the key folded away');
+  assert.ok(p.$$('#ginfo ul').length >= 2, 'the key came back without its legend');
+});
+
+test('the idle key folds to the button that brings it back, and only the idle key folds', t => {
+  const p = load({ t });
+  const info = p.$('#ginfo');
+  const fold = () => info.querySelector('button.x');
+  const modes = () => Object.keys(p.peek('modeColor')).length;
+
+  // Unfolded is the default, and the legend is the reason the panel is there: one row
+  // per access mode, one per indirection kind.
+  assert.equal(p.peek('state.key'), true);
+  assert.equal(info.classList.contains('lean'), false);
+  assert.equal(p.$$('#ginfo ul')[0].querySelectorAll('li').length, modes(),
+    'the key does not list one row per access mode');
+  assert.equal(fold().getAttribute('aria-expanded'), 'true');
+
+  p.press('#ginfo button.x');
+  assert.equal(p.peek('state.key'), false, 'the fold button did not fold anything');
+  assert.ok(info.classList.contains('lean'));
+  assert.equal(p.$$('#ginfo ul').length, 0, 'the legend survived the fold');
+  // Folded, the panel is still the affordance that unfolds it — a legend that cannot be
+  // asked for again is a legend that has been deleted.
+  assert.ok(fold(), 'folding removed the only way back');
+  assert.equal(fold().getAttribute('aria-expanded'), 'false');
+  assert.ok(fold().title.length > 0, 'the folded button says nothing about what it holds');
+
+  // A hovered node still answers, folded or not: the fold is about the legend, which is
+  // read once, not about the panel, which is a question being asked right now.
+  const node = p.pickDep(1);
+  node.g.dispatchEvent(new p.win.Event('pointerenter'));
+  assert.equal(info.classList.contains('lean'), false, 'a node answer came back folded');
+  assert.match(p.text('#ginfo h4'), /\S/, 'the hover said nothing');
+  node.g.dispatchEvent(new p.win.Event('pointerleave'));
+  assert.ok(info.classList.contains('lean'), 'the hover unfolded the key behind the reader');
+
+  p.press('#ginfo button.x');
+  assert.equal(p.peek('state.key'), true, 'the button unfolds only in one direction');
+  assert.ok(p.$$('#ginfo ul').length >= 2, 'the legend did not come back');
 });
 
 test('the code view withholds prose and leaves the drawn topology alone', t => {

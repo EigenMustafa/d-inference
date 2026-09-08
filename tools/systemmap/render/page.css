@@ -175,6 +175,10 @@ svg.prov .hull-sub { fill: var(--pp); }
 /* A hover is a preview; a click pins a panel wide enough to hold the prose that
    explains what the thing is. */
 .ginfo.pinned { width: 400px; max-width: calc(100% - 20px); border-color: var(--accent); }
+/* Folded, the panel is its own heading and the button that unfolds it, so it holds no
+   width it is not using: a 300px box with one line in it is the same corner of the
+   picture spent, for less. */
+.ginfo.lean { width: auto; }
 .ginfo h4 { margin: 0 0 2px; font-size: 13px; }
 .ginfo h5 { margin: 10px 0 2px; font-size: 11px; text-transform: uppercase;
   letter-spacing: .05em; color: var(--dim); font-weight: 600; }

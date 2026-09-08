@@ -3,6 +3,8 @@
 ## Unreleased — provider SSD cache disk policy
 
 - Size the shared SSD cache at half of currently available disk space without a fixed 100 GiB ceiling. Keep a fixed 20 GiB low-disk write reserve instead of reserving 5% of the whole disk, so large disks with ample free space can cache. Preserve encryption, eviction, daily write limits and ENOSPC handling.
+- Check the full pending SSD donation against free space above the reserve before writing, so a donation cannot pass merely because free space starts above 20 GiB.
+
 ## Unreleased: prediction decisions and backup deadlines
 
 - Record the coordinator's prediction policy, reservation ceiling and encoded deadline budget alongside each provider's returned prediction and decision. Distinguish refusals from acceptance followed by expiry without changing error codes or prediction policy.

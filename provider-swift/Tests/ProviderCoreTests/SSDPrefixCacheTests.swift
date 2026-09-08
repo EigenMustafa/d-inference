@@ -1654,6 +1654,37 @@ struct SSDReadyWriteBarrierTests {
         #expect(outcome.outcome == .donated)
     }
 
+    @Test("pending donation must fit above the free-space reserve", arguments: [0, 1, 2])
+    func pendingDonationReserve(headroom: Int) async throws {
+        let dir = tempDir("pending-donation-reserve-\(headroom)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let writes = Counter()
+        let settled = Counter()
+        let durable = Counter()
+        let outcome = OutcomeBox()
+        let writer = pipeline(
+            dir: dir,
+            volumeSpace: {
+                (free: SSDPrefixCachePolicy.lowDiskAbsoluteFloorBytes + headroom,
+                 capacity: 2_000_000_000_000)
+            },
+            writeBlock: { _, _ in writes.increment(); return 1 },
+            onBlockSettled: { _ in settled.increment() })
+        // Each block fits in one byte; the complete two-byte donation must fit.
+        #expect(writer.submit(.init(
+            blocks: [block(1), block(2)], totalBytes: 2,
+            onDurable: { durable.increment(); return true },
+            onOutcome: outcome.set)))
+        await writer.waitUntilDrained()
+        writer.close()
+        let fits = headroom >= 2
+        #expect(writes.count == (fits ? 2 : 0))
+        #expect(settled.count == 2)
+        #expect(durable.count == (fits ? 1 : 0))
+        #expect(outcome.outcome == (fits ? .donated : .diskUnavailable))
+        #expect(outcome.count == 1)
+    }
+
     @Test("low disk, generic write error, ENOSPC, and shutdown never cross durable barrier")
     func failureMatrix() async throws {
         let dir = tempDir("ready-write-failures")

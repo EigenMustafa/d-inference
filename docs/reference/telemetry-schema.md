@@ -1,6 +1,6 @@
 # Telemetry event schema
 
-> Last updated: 2026-09-07 · commit `53646bc9b`
+> Last updated: 2026-09-07 · commit `0b46b1618`
 
 The shape of a telemetry *event* as it exists in three mirrors (Go, Swift,
 TypeScript), the closed enums it carries, the field allowlist, and the tests
@@ -16,6 +16,30 @@ design and failure modes: [`../architecture/telemetry.md`](../architecture/telem
 The terminal-profile [prediction decision fields](prediction-decision-telemetry.md)
 use the separate Go/Swift profiler protocol, not this event allowlist or its
 TypeScript mirror.
+
+Durable cache statistics use optional typed heartbeat objects, not event
+`fields`: [`slots[].prefix_cache`](protocol-messages.md#slotsprefix_cache) and
+`backend_capacity.prefix_cache_maintenance`. The live producer/consumer and
+counter units are listed in the [telemetry inventory](telemetry-inventory.md).
+The client event facade remains disabled.
+
+Paged allocator observations use the separate optional
+[`slots[].paged_storage`](protocol-messages.md#slotspaged_storage) heartbeat
+object (`coordinator/protocol/paged_storage_telemetry.go`, `PagedStorageTelemetry`).
+They add no event fields or allowlist entries. The native queue captures
+`PagedKVStorageSnapshot`; `PagedStorageTelemetryAdapter` copies its scalars and
+computes age for the heartbeat without traversing allocator ownership. Optional
+`allocator_padding_bytes` and `last_allocation_allowance_bytes` distinguish
+retained nonusable bytes from released preparation allowance. The canonical
+`coordinator/protocol/testdata/paged_footprint_wire.json` fixture pins their
+wire representation and omission behavior across Swift, Go and TypeScript.
+
+Process ownership uses optional
+[`backend_capacity.telemetry.process_memory`](protocol-messages.md#backend_capacitytelemetryprocess_memory)
+(`coordinator/protocol/process_memory_telemetry.go`, `ProcessMemoryTelemetry`).
+The Swift producer, Go consumer and TypeScript mirror share the canonical
+`coordinator/protocol/testdata/process_memory_wire.json` fixture. These scalar
+observations add no event fields or allowlist entries.
 
 ## Mirrors
 
@@ -88,13 +112,18 @@ content are never admitted.
 | OOM / memory pressure | `detect_source`, `peak_memory_bytes`, `report`, `pressure`, `available_bytes`, `mlx_active_bytes`, `memory_pressure`, `in_flight` |
 | Engine health / first-token wedge | `steps_executed`, `admits`, `first_tokens_emitted`, `consecutive_admits_without_first_token`, `seconds_since_last_step`, `seconds_since_last_first_token`, `num_running`, `wedge_suspected` |
 | Eval / idle-clear / prefill sampling | `eval_in_flight_ms`, `longest_eval_ms`, `evals_completed`, `idle_clear_in_flight_ms`, `idle_clears_completed`, `prefill_samples_accepted`, `prefill_samples_dropped_floor`, `prefill_samples_dropped_ceiling`, `last_prefill_sample_tps`, `observed_prefill_tps_ewma` |
-| KV-budget sustained-rejection audit | `streak_seconds`, `reservation_count`, `reserved_bytes`, `mlx_cache_bytes`, `system_available_bytes`, `reservations`, `request_id`, `age_seconds` |
+| KV-budget sustained-rejection audit (legacy drop-event keys remain accepted) | `streak_seconds`, `reservation_count`, `reserved_bytes`, `mlx_cache_bytes`, `system_available_bytes`, `reservations`, `request_id`, `age_seconds` |
 | Media through engine_v2 | `multimodal`, `media_kind` (`image`/`video`/`mixed`) |
 | Exact-prefix replay | `prefix_reuse_strategy`, `prefix_matched_tokens`, `prefix_replay_tokens`, `prefix_saved_tokens`, `prefix_boundary_splits`, `prefix_construction_failure`, `prefix_capacity_refusal`, `prefix_cold_fallback` |
 | KV-backend discriminator | `kv_backend` (`paged`/`contiguous`, same key as `BackendSlotCapacity.KVBackend` on the heartbeat), `prefix_reuse_backend` (`contiguous_unquantized`/`contiguous_quantized`/`paged_fp16`/`unknown`) |
 | Paged KV pool | `pool_utilization` (occupancy ratio), `pool_bytes`, `pool_deferred_growth_bytes`, `pool_stranded_bytes` (raw bytes; `pages_pinned` and `cow_events` are deliberately absent because neither mechanism exists) |
 | Multi-token prediction | `mtp_enabled`, `mtp_active`, `mtp_inactive_reason` (`MTPFallbackReason` values plus `inert_kv_unsupported`), `mtp_acceptance_rate`, `mtp_proposed_tokens`, `mtp_accepted_tokens` |
 | Console UI context | `url`, `user_agent`, `route` |
+
+`GlobalKVCacheBudget.recordCommitRejection` reports ownership during sustained
+capacity rejection without releasing reservations by age. Older provider drop
+events remain decodable through the existing `request_id` and `age_seconds`
+allowlist; the current producer emits only the diagnostic table.
 
 ### Known mirror gaps
 

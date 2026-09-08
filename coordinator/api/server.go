@@ -158,7 +158,7 @@ func keyLimitResetFromContext(ctx context.Context) string {
 // assistant support; model-aware MTP defaults remain provider-side policy.
 // Keep this fallback in sync with ProviderCore.version so dev/in-memory
 // coordinators advertise the same floor as the Swift binary they expect.
-var LatestProviderVersion = "0.8.16"
+var LatestProviderVersion = "0.9.0"
 
 // minProviderVersionForDesiredModels is the first provider version whose Swift
 // runtime understands the desired_models message. The coordinator must NOT send
@@ -413,9 +413,6 @@ type Server struct {
 	// metrics is the in-process metrics registry exposed via /v1/admin/metrics
 	// and used by internal counters/histograms. Never nil.
 	metrics *Metrics
-
-	// telemetryLimiter throttles telemetry ingestion per submitter.
-	telemetryLimiter *telemetryLimiter
 
 	// readCache memoizes pre-serialized JSON for read-heavy aggregation
 	// endpoints (stats, leaderboard, model catalog, etc.). TTLs are
@@ -827,7 +824,6 @@ func NewServer(reg *registry.Registry, st store.Store, cfg ServerConfig, logger 
 		mux:                      http.NewServeMux(),
 		knownRuntimeManifest:     &RuntimeManifest{},
 		metrics:                  NewMetrics(),
-		telemetryLimiter:         newTelemetryLimiter(),
 		readCache:                newTTLCache(),
 		geoResolver:              newProviderGeoResolverFromEnv(logger),
 		apiKeyCache:              make(map[string]apiKeyCacheEntry),

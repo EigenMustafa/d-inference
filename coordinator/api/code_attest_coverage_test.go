@@ -43,7 +43,7 @@ func TestCodeContinuityResumeStillRequiresLiveProcessProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Hour)
-	observation, ok := old.codeCoverageObservation(p)
+	observation, ok := old.codeCoverageObservation(p, false)
 	if !ok {
 		t.Fatal("verified live process did not produce coverage")
 	}
@@ -146,8 +146,13 @@ func TestCodeCoverageRequiresVerifiedCurrentBinding(t *testing.T) {
 			p.PublicKey = pub
 			p.AttestationResult.BinaryHash = strings.Repeat("a", 64)
 			tc.change(p)
-			if _, ok := srv.codeCoverageObservation(p); ok {
-				t.Fatal("unproven binding advanced coverage")
+			for _, allowOffline := range []bool{false, true} {
+				if allowOffline && p.Status == registry.StatusOnline {
+					p.Status = registry.StatusOffline
+				}
+				if _, ok := srv.codeCoverageObservation(p, allowOffline); ok {
+					t.Fatalf("unproven binding advanced coverage (allowOffline=%v)", allowOffline)
+				}
 			}
 		})
 	}
@@ -185,9 +190,33 @@ func TestCodeCoverageSweepDisconnectAndClose(t *testing.T) {
 	now = now.Add(time.Hour)
 	srv.sweepCodeAttestCoverage()
 	check(now)
-	now = now.Add(10 * time.Second)
+	lastSweep := now
+	now = now.Add(25 * time.Second)
+	// providerReadLoop marks the dead socket offline before deferred cleanup.
+	p.Mu().Lock()
+	p.Status = registry.StatusOffline
+	p.Mu().Unlock()
+	srv.sweepCodeAttestCoverage()
+	check(lastSweep) // periodic sweeps must never keep offline evidence alive
 	srv.stopCodeAttestCoverageForProvider(p.ID)
 	check(now)
+	disconnectedAt := now
+	rows, err := st.ListCodeAttestations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gap := range []time.Duration{100 * time.Second, 120 * time.Second, 121 * time.Second} {
+		th := newCodeAttestThrottle()
+		th.now = func() time.Time { return disconnectedAt.Add(gap) }
+		th.seed(rows)
+		if got := th.reuseAttestation("coverage-se", p.Version, p.APNsDeviceToken, p.PublicKey); got != (gap <= codeAttestContinuityGap) {
+			t.Fatalf("reuse after disconnect gap %s = %v", gap, got)
+		}
+	}
+	// Graceful server shutdown still stamps connections that remain online.
+	p.Mu().Lock()
+	p.Status = registry.StatusOnline
+	p.Mu().Unlock()
 	now = now.Add(10 * time.Second)
 	srv.Close()
 	check(now)

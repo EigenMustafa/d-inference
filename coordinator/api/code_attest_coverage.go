@@ -41,13 +41,16 @@ func (r codeAttestRecord) persisted(seKey string) store.CodeAttestation {
 
 // Observation is authorized by an already verified connection, not by a
 // heartbeat claiming a version/token. Capture the timestamp with the flags.
-func (s *Server) codeCoverageObservation(p *registry.Provider) (store.CodeAttestation, bool) {
+// Only final disconnect stamping may observe the just-offlined connection;
+// periodic and shutdown sweeps must not extend coverage for offline providers.
+func (s *Server) codeCoverageObservation(p *registry.Provider, allowOffline bool) (store.CodeAttestation, bool) {
 	if p == nil || s.codeAttestThrottle == nil {
 		return store.CodeAttestation{}, false
 	}
 	p.Mu().Lock()
 	at := s.codeAttestThrottle.now().Truncate(time.Microsecond)
-	if !p.CodeAttested || !p.FreshCodeAttested || p.Status != registry.StatusOnline || p.TrustLevel != registry.TrustHardware || p.AttestationResult == nil || !p.AttestationResult.Valid {
+	statusAllowed := p.Status == registry.StatusOnline || (allowOffline && p.Status == registry.StatusOffline)
+	if !p.CodeAttested || !p.FreshCodeAttested || !statusAllowed || p.TrustLevel != registry.TrustHardware || p.AttestationResult == nil || !p.AttestationResult.Valid {
 		p.Mu().Unlock()
 		return store.CodeAttestation{}, false
 	}
@@ -93,7 +96,7 @@ func (s *Server) sweepCodeAttestCoverage() {
 	}
 	rows := []store.CodeAttestation{}
 	s.registry.ForEachProvider(func(p *registry.Provider) {
-		if r, ok := s.codeCoverageObservation(p); ok {
+		if r, ok := s.codeCoverageObservation(p, false); ok {
 			rows = append(rows, r)
 		}
 	})
@@ -104,7 +107,7 @@ func (s *Server) stopCodeAttestCoverageForProvider(providerID string) {
 	if s == nil || s.registry == nil {
 		return
 	}
-	if r, ok := s.codeCoverageObservation(s.registry.GetProvider(providerID)); ok {
+	if r, ok := s.codeCoverageObservation(s.registry.GetProvider(providerID), true); ok {
 		s.persistCodeCoverage([]store.CodeAttestation{r})
 	}
 }

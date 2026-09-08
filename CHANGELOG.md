@@ -3,7 +3,7 @@
 ## Unreleased — cache evidence and coordinator reconnect recovery
 
 - Preserve unchanged models' cache holders and receipts when another model loads or changes, and keep proof-mismatch fences across unrelated capability updates. Report bounded receipt rejection reasons and separate proof mismatch from ordinary holder changes.
-- Persist verified same-process APNs continuity for bounded coordinator reconnects without refreshing the original Apple proof timestamp. Preserve encrypted resume challenges, token/process/binary binding, new-process freshness checks and Apple push budgets.
+- Persist verified same-process APNs continuity for bounded coordinator reconnects without refreshing the original Apple proof timestamp. Preserve encrypted resume challenges, token/process/binary binding, new-process freshness checks and Apple push budgets. Stamp final continuity after the socket is marked offline while keeping periodic updates online-only.
 
 ## Unreleased: prediction decisions and backup deadlines
 

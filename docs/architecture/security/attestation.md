@@ -1,6 +1,6 @@
 # Provider attestation
 
-> Last updated: 2026-09-07 · commit `efcde6334`
+> Last updated: 2026-09-08 · commit `eba352122`
 
 How the coordinator decides how far to trust a provider connection: three
 trust levels (`none`, `self_signed`, `hardware`), two flags carried alongside
@@ -224,7 +224,10 @@ Same-process continuity is separate from hardware continuity. The coordinator
 records it only while the exact SE key, version, APNs token, process key and
 binary binding remain code-attested, freshly process-proven, hardware-trusted
 and online. Coverage is batched on the existing 30-second loop and stamped
-before disconnect and graceful shutdown. Store updates compare the original
+at disconnect and graceful shutdown. Only the final disconnect stamp permits
+the just-offlined connection; periodic and shutdown sweeps remain online-only.
+The disconnect exception retains all code-proof, hardware-trust and identity
+checks, and never admits an untrusted provider. Store updates compare the original
 proof tuple and `attested_at`; they cannot insert a proof, resurrect a deleted
 row or cover a newer process. Neither coverage nor a resume changes the original
 APNs timestamp. An old proof with missing, expired or future coverage requires

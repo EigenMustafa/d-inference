@@ -1978,7 +1978,10 @@ threats:
       - description: >
           Same-process code continuity is observed only on online hardware-trusted
           connections with CodeAttested and FreshCodeAttested, matching SE key,
-          token, process key, version and binary. Conditional coverage writes match
+          token, process key, version and binary. Only final disconnect stamping may
+          accept the just-offlined connection with all those checks intact; periodic
+          and shutdown sweeps cannot refresh offline coverage, and untrusted
+          providers are always rejected. Conditional coverage writes match
           the original APNs proof instant, never create rows or refresh attested_at,
           and cannot resurrect deleted or replaced proof. Future or expired coverage
           refuses reuse. Process-key/version changes cannot inherit continuity;

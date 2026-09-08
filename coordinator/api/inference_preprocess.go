@@ -163,6 +163,14 @@ func (s *Server) parseInferencePrelude(w http.ResponseWriter, r *http.Request) (
 	if !ok {
 		return inferencePrelude{}, false
 	}
+	// The handlers use false for an absent/non-boolean stream field. Capture
+	// that parsed mode before model lookup or any subsequent validation exits.
+	if o := requestOutcomeFromContext(r.Context()); o != nil {
+		stream, _ := parsed["stream"].(bool)
+		o.mu.Lock()
+		o.record.Stream = &stream
+		o.mu.Unlock()
+	}
 
 	// Normalize tool JSON-Schemas before dispatch so providers running binaries
 	// older than 0.6.3 (which normalize provider-side, #310) never see the

@@ -102,6 +102,7 @@ func (s *Server) writeChatStreamTerminalError(
 			"type":    errorType,
 		},
 	})
-	fmt.Fprintf(w, "data: %s\n\n", errData)
+	n, err := fmt.Fprintf(w, "data: %s\n\n", errData)
+	markResponseTerminalWrite(w, responseTerminals{first: "error"}, n, len(errData)+8, err)
 	flusher.Flush()
 }

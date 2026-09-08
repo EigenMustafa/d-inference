@@ -53,6 +53,7 @@ import (
 	"github.com/eigeninference/d-inference/coordinator/saferun"
 	"github.com/eigeninference/d-inference/coordinator/store"
 	"github.com/eigeninference/d-inference/coordinator/telemetry"
+	"github.com/google/uuid"
 	"golang.org/x/mod/semver"
 	"golang.org/x/sync/singleflight"
 )
@@ -497,7 +498,8 @@ type Server struct {
 
 	// profiler owns the per-request profile records and their dedicated sink
 	// (system profiler). Nil on a Server built without NewServer.
-	profiler *profiler
+	profiler        *profiler
+	requestOutcomes *requestOutcomeSink
 	// unknownRequestFrames counts provider frames for requests the coordinator
 	// no longer tracks (zombie streams); exported on the fleet coordinator row.
 	unknownRequestFrames atomic.Int64
@@ -873,6 +875,7 @@ func NewServer(reg *registry.Registry, st store.Store, cfg ServerConfig, logger 
 		s.ddHistogram("registry.gate.wait_ms", float64(wait.Microseconds())/1000, []string{"site:" + site})
 	})
 	s.profiler = newProfilerFromEnv(s)
+	s.requestOutcomes = newRequestOutcomeSink(s, defaultTelemetrySinkCapacity)
 	s.registerDefaultGauges()
 	s.routes()
 
@@ -977,6 +980,9 @@ func (s *Server) Close() {
 		s.trustAuthority = nil
 	}
 	s.trustAuthorityMu.Unlock()
+	if s.requestOutcomes != nil {
+		s.requestOutcomes.close()
+	}
 	if s.profiler != nil {
 		s.profiler.close()
 	}
@@ -2997,6 +3003,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/admin/routes", s.handleAdminRoutes)
 	s.mux.HandleFunc("GET /v1/admin/routes/export", s.handleAdminRoutesExport)
 	s.mux.HandleFunc("GET /v1/admin/profiles", s.handleAdminProfiles)
+	s.mux.HandleFunc("GET /v1/admin/request-outcomes", s.handleAdminRequestOutcomes)
 	s.mux.HandleFunc("GET /v1/admin/profiles/export", s.handleAdminProfilesExport)
 	s.mux.HandleFunc("GET /v1/admin/snapshots", s.handleAdminSnapshots)
 	s.mux.HandleFunc("GET /v1/admin/snapshots/export", s.handleAdminSnapshotsExport)
@@ -3153,11 +3160,11 @@ func (s *Server) handleUnimplementedEndpoint(w http.ResponseWriter, r *http.Requ
 // Handler returns the root http.Handler with global middleware applied.
 // Middleware order (outside-in):
 //
-//	cors → recover → logging → mux
+//	cors → request outcome (inference POSTs only) → recover → logging → mux
 //
 // Recover must sit outside logging so a panic during logging doesn't leak.
 func (s *Server) Handler() http.Handler {
-	return s.corsMiddleware(s.recoverMiddleware(s.loggingMiddleware(s.bodyLimitMiddleware(s.mux))))
+	return s.corsMiddleware(s.observeRequestOutcome(s.recoverMiddleware(s.loggingMiddleware(s.bodyLimitMiddleware(s.mux))).ServeHTTP))
 }
 
 // bodyLimitMiddleware caps every request body at maxRequestBodyBytes so an
@@ -3204,6 +3211,7 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 				if recErr, ok := rec.(error); ok && errors.Is(recErr, http.ErrAbortHandler) {
 					panic(rec)
 				}
+				markOutcomePanic(r)
 				stack := string(debug.Stack())
 				s.logger.Error("panic in HTTP handler",
 					"error", fmt.Sprintf("%v", rec),
@@ -3292,6 +3300,7 @@ func (s *Server) invalidateAllAPIKeyCache() {
 // identity is stored in the request context for downstream use.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setOutcomeStage(r, "auth")
 		token := extractBearerToken(r)
 		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, errorResponse("authentication_error", "missing credentials — use Authorization: Bearer <token>"))
@@ -3486,6 +3495,7 @@ func (s *Server) rateLimitWith(getLimiter func() *ratelimit.Limiter, next http.H
 // rejections in dashboards.
 func (s *Server) rateLimitWithTier(getLimiter func() *ratelimit.Limiter, tier string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setOutcomeStage(r, "rate_limit")
 		// Per-key RPM override applies to inference (consumer) traffic and is
 		// enforced regardless of whether the account-level limiter is set.
 		if tier == "consumer" {
@@ -3610,10 +3620,10 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), ctxKeyRequestID, reqID)
 		// Profiler correlation id is ALWAYS coordinator-minted (the client-supplied
 		// X-Request-ID above is echoed and logged but never persisted).
-		if s.profilerEnabled() {
+		if requestMetaFromContext(ctx) == nil && (s.profilerEnabled() || inferenceOutcomeEndpoint(r)) {
 			meta := &requestMeta{coordID: reqID, start: start}
-			if r.Header.Get("X-Request-ID") != "" {
-				meta.coordID = newRequestID()
+			if inferenceOutcomeEndpoint(r) || r.Header.Get("X-Request-ID") != "" {
+				meta.coordID = uuid.NewString()
 			}
 			ctx = context.WithValue(ctx, requestMetaKey{}, meta)
 		}

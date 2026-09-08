@@ -1,6 +1,6 @@
 # Telemetry
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-07 · commit `efcde6334`
 
 How operational data leaves a provider, what the coordinator does with it, and
 why nothing on that path can carry a prompt or slow a request. The heartbeat is
@@ -279,6 +279,15 @@ and the `inference.timing.*` histograms are built from the same
 | Abrupt disconnect at high memory pressure | classified OOM (`≥ 0.90`, or `≥ 0.80` with in-flight work) | `provider.oom_suspected`, `ws.disconnects`, `provider_sessions.disconnect_reason` |
 | Allowlist edited in one mirror only | CI fails | `TestTelemetryAllowlistThreeWayParity` |
 | Expecting trace correlation | `dd.trace_id` never present (no spans) | use `request_id` |
+
+Cache receipt diagnostics use `exact_cache.receipt` (Datadog) and
+`exact_cache_receipt_total` (admin metrics), with bounded `type`, `outcome`,
+and `reason` labels from `coordinator/registry/cache_receipt_result.go`. They
+distinguish rejected evidence from provider-reported hits. APNs recovery emits
+`code_attest.resume_proof_sent{basis:recent_apns|process_continuity}`,
+`code_attest.proof_verified{kind:apns|resume}` and
+`code_attest.coverage_persist{outcome:success|error}`. These are aggregate
+operational metrics; they add no fields to the provider telemetry wire schema.
 
 ## Code map
 

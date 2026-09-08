@@ -1969,7 +1969,8 @@ threats:
       the E_K(nonce) challenge with its in-memory key K and sign the nonce with its
       registration-bound SE key — re-proved on every WebSocket connection, either by
       a fresh APNs push or, when a durable proof for the same SE key + APNs token
-      younger than the 30-minute reuseWindow exists, by a NaCl-sealed resume challenge
+      is younger than the 30-minute reuseWindow, or coordinator-observed code-verified
+      continuity covers the exact same process within 120 seconds, by a NaCl-sealed resume challenge
       over the WebSocket (code_attestation_resume_challenge, 30 s) that costs no APNs
       budget. Pushes are throttled (20 min background / 75 s alert cooldown per device,
       3 attempts per loop, 300 s challenge validity; code_attest_throttle.go).
@@ -1982,6 +1983,19 @@ threats:
       - provider-swift/Sources/ProviderCore/ProviderLoop.swift
       - provider-swift/Sources/darkbloom/ProviderAppKitHost.swift
     mitigations:
+      - description: >
+          Same-process code continuity is observed only on online hardware-trusted
+          connections with CodeAttested and FreshCodeAttested, matching SE key,
+          token, process key, version and binary. Only final disconnect stamping may
+          accept the just-offlined connection with all those checks intact; periodic
+          and shutdown sweeps cannot refresh offline coverage, and untrusted
+          providers are always rejected. Conditional coverage writes match
+          the original APNs proof instant, never create rows or refresh attested_at,
+          and cannot resurrect deleted or replaced proof. Future or expired coverage
+          refuses reuse. Process-key/version changes cannot inherit continuity;
+          every resume still decrypts a fresh sealed nonce and signs it with the
+          registration-bound SE key. Hardware-only liveness cannot seed code continuity.
+        status: implemented
       - description: >
           APNs code-identity round-trip: coordinator pushes E_K(nonce) to the
           registration-bound device token; provider decrypts with K and replies

@@ -146,6 +146,7 @@ const (
 	cacheHolderRemovalDisconnect       cacheHolderRemovalReason = "disconnect"
 	cacheHolderRemovalEpochChange      cacheHolderRemovalReason = "epoch_change"
 	cacheHolderRemovalCapabilityChange cacheHolderRemovalReason = "capability_change"
+	cacheHolderRemovalProofMismatch    cacheHolderRemovalReason = "proof_mismatch"
 	cacheHolderRemovalMissInvalidation cacheHolderRemovalReason = "miss_invalidation"
 	cacheHolderRemovalCapacityEviction cacheHolderRemovalReason = "capacity_eviction"
 )
@@ -156,6 +157,7 @@ func CacheHolderRemovalReasons() []string {
 		string(cacheHolderRemovalDisconnect),
 		string(cacheHolderRemovalEpochChange),
 		string(cacheHolderRemovalCapabilityChange),
+		string(cacheHolderRemovalProofMismatch),
 		string(cacheHolderRemovalMissInvalidation),
 		string(cacheHolderRemovalCapacityEviction),
 	}

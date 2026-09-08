@@ -1,6 +1,6 @@
 # Exact Prefix Cache Routing
 
-> Last updated: 2026-09-05 · commit `06b02df7a`
+> Last updated: 2026-09-07 · commit `efcde6334`
 
 Exact prefix cache routing lets the scheduler prefer a provider that has
 *proven* it holds a reusable exact token prefix in an advertised resident
@@ -246,15 +246,15 @@ Evidence is removed or made unreachable on:
 - holder expiry or deterministic cap eviction;
 - routing transition to `off`.
 
-A capability mode change invalidates existing holders even if its epoch string
-is unchanged (`UpdatePrefixCacheSnapshot`, `coordinator/registry/cache_snapshot.go`).
+A capability mode change invalidates that model's existing holders and attempts even if its epoch string
+is unchanged. Unchanged models retain their evidence and proof fences. Publication and invalidation hold the same registry/provider ownership, so an old heartbeat cannot erase a replacement connection's evidence (`UpdatePrefixCacheSnapshot`, `coordinator/registry/cache_snapshot.go`).
 The checkpoint routing milestone is covered by local Go protocol, registry,
 simulated multi-provider, and API wire tests; it is not a live two-machine
 measurement ([source and test evidence](../reports/evidence/2026-09-05-ssd-checkpoint-cache/coordinator-evidence-manifest.json)).
 
-Holder removals are counted under one of six reasons
+Holder removals are counted under one of seven reasons
 (`coordinator/registry/cache_routing.go`): `ttl`, `disconnect`,
-`epoch_change`, `capability_change`, `miss_invalidation`,
+`epoch_change`, `capability_change`, `proof_mismatch`, `miss_invalidation`,
 `capacity_eviction`. SSD capacity eviction rotates its durable epoch. Resident LRU eviction does not
 rotate the whole slot epoch: its remaining checkpoints stay useful, and stale
 advisory evidence expires or is removed by the next exact miss. Slot unload,
@@ -583,9 +583,17 @@ back are operator procedures, kept in the runbook
 | Media requests never earn a discount | `HasMedia` requests are excluded by design | No participating plan is produced |
 | A capability stops participating after a hit | Prompt-proof mismatch quarantined that exact capability | Request continues without preference; participation resumes only after a fresh valid proof |
 | One provider loses all holders for a model | Its SSD capacity eviction rotated the model's cache epoch | Invalidates that provider/model evidence; other machines holding the same prefix remain eligible |
-| Holders vanish for one provider | Disconnect or live-connection replacement, capability/contract/aggregate-hash change, verified miss or corruption, TTL, cap eviction | Removal counted under one of the six `CacheRoutingLifecycleStatus` reasons (`coordinator/registry/cache_routing.go`) |
+| Holders vanish for one provider | Disconnect or live-connection replacement, capability/contract/aggregate-hash change, verified miss or corruption, TTL, cap eviction | Removal counted under one of the seven `CacheRoutingLifecycleStatus` reasons (`coordinator/registry/cache_routing.go`) |
 | `/v1/cache/status` shows a provider's models as `unreported` | Status array beyond `maxPrefixCacheStatuses`, duplicate keys, a blank model ID, or a status contradicting the v2 capability | `sanitizePrefixCacheStatuses` drops the optional snapshot; routing capability is never weakened (`coordinator/registry/cache_snapshot.go`) |
 | A cached provider loses to a cold one | Residual prefill, full staging, age, queue or hardware costs outweigh its benefit; or an explicit limit clips it | Minimum adjusted service cost wins; there is no hard affinity |
+
+Receipt rejection telemetry distinguishes invalid shape, missing/expired attempt,
+request/connection/capability changes, prior rejection fencing, duplicate or stale
+sequence, missing accepted lookup, and identity/prompt/ready-anchor disagreement.
+The closed reasons come from `coordinator/registry/cache_receipt_result.go`;
+`exact_cache.receipt` and `exact_cache_receipt_total` label type, outcome and reason.
+Provider-reported usage remains separate from accepted proof-backed lookup hits.
+No nonce, scope, prompt or prefix hash is emitted by these counters.
 
 ## Code map
 

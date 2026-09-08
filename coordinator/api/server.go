@@ -950,6 +950,7 @@ func (s *Server) Close() {
 		s.trustCoverageCancel()
 	}
 	s.finalTrustCoverageSweep()
+	s.sweepCodeAttestCoverage()
 	if s.trustReplayCancel != nil {
 		s.trustReplayCancel()
 	}

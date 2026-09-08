@@ -3273,7 +3273,7 @@ func (s *MemoryStore) ListCodeAttestations(_ context.Context) ([]CodeAttestation
 
 	out := make([]CodeAttestation, 0, len(s.codeAttestations))
 	for _, rec := range s.codeAttestations {
-		out = append(out, rec)
+		out = append(out, cloneCodeAttestation(rec))
 	}
 	return out, nil
 }
@@ -3285,7 +3285,12 @@ func (s *MemoryStore) UpsertCodeAttestation(_ context.Context, rec CodeAttestati
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.codeAttestations[rec.SEPubKey] = rec
+	if old, ok := s.codeAttestations[rec.SEPubKey]; !ok || !rec.AttestedAt.Before(old.AttestedAt) {
+		if ok && sameCodeProof(old, rec) && old.ContinuousCoverageUntil != nil && (rec.ContinuousCoverageUntil == nil || old.ContinuousCoverageUntil.After(*rec.ContinuousCoverageUntil)) {
+			rec.ContinuousCoverageUntil = old.ContinuousCoverageUntil
+		}
+		s.codeAttestations[rec.SEPubKey] = cloneCodeAttestation(rec)
+	}
 	return nil
 }
 

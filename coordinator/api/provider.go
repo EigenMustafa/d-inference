@@ -258,6 +258,7 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 		// provider down), so the measured reconnect gap starts here rather
 		// than at the last periodic coverage pass.
 		s.stopTrustCoverageForProvider(providerID)
+		s.stopCodeAttestCoverageForProvider(providerID)
 		s.registry.DisconnectWithReason(providerID, registry.ClassifyPeerClose(peerCloseStatus, false))
 		conn.Close(websocket.StatusNormalClosure, "goodbye")
 	}()
@@ -702,7 +703,9 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 
 		case protocol.TypePrefixCacheLookupV2:
 			lookupMsg := msg.Payload.(*protocol.PrefixCacheLookupV2Message)
-			if s.registry.ApplyPrefixCacheLookupV2(providerID, lookupMsg) {
+			receipt := s.registry.ApplyPrefixCacheLookupV2Result(providerID, lookupMsg)
+			s.emitCacheReceiptResult("lookup_v2", receipt)
+			if receipt.Accepted {
 				s.ddIncr("routing.cache_lookup_receipt", []string{
 					"protocol:v2",
 					"outcome:" + lookupMsg.Outcome,
@@ -712,12 +715,14 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 					s.emitExactCacheSSDLookup("v2", lookupMsg.Outcome, lookupMsg.StageMs)
 				}
 			} else {
-				s.ddIncr("routing.cache_receipt_rejected", []string{"type:lookup_v2"})
+				s.ddIncr("routing.cache_receipt_rejected", []string{"type:lookup_v2", "reason:" + string(receipt.Reason)})
 			}
 
 		case protocol.TypePrefixCacheReadyV2:
 			readyMsg := msg.Payload.(*protocol.PrefixCacheReadyV2Message)
-			if s.registry.ApplyPrefixCacheReadyV2(providerID, readyMsg) {
+			receipt := s.registry.ApplyPrefixCacheReadyV2Result(providerID, readyMsg)
+			s.emitCacheReceiptResult("ready_v2", receipt)
+			if receipt.Accepted {
 				s.ddIncr("routing.cache_ready_receipt", []string{
 					"protocol:v2",
 					"tier:" + lowCardinalityCacheTier(readyMsg.Tier),
@@ -730,7 +735,7 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 					s.emitExactCacheSSDDonation("v2", readyMsg.StageMs, donatedTokens)
 				}
 			} else {
-				s.ddIncr("routing.cache_receipt_rejected", []string{"type:ready_v2"})
+				s.ddIncr("routing.cache_receipt_rejected", []string{"type:ready_v2", "reason:" + string(receipt.Reason)})
 			}
 
 		case protocol.TypeAttestationResponse:

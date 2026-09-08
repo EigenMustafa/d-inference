@@ -1010,6 +1010,7 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		// row's empty hash marks a legacy identity-less proof, which never
 		// authorizes a release-transition resume (real APNs challenge instead).
 		`ALTER TABLE code_attestations ADD COLUMN IF NOT EXISTS binary_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE code_attestations ADD COLUMN IF NOT EXISTS continuous_coverage_until TIMESTAMPTZ`,
 		// Durable APNs admission state is deliberately separate from successful
 		// attestation evidence. Spending a push budget never creates trust.
 		`CREATE TABLE IF NOT EXISTS code_attest_push_budgets (
@@ -4739,7 +4740,7 @@ func (s *PostgresStore) ListCodeAttestations(ctx context.Context) ([]CodeAttesta
 	defer cancel()
 
 	rows, err := s.pool.Query(ctx,
-		`SELECT se_pubkey, version, attested_at, apns_token, node_public_key, binary_hash FROM code_attestations`)
+		`SELECT se_pubkey, version, attested_at, apns_token, node_public_key, binary_hash, continuous_coverage_until FROM code_attestations`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list code attestations: %w", err)
 	}
@@ -4750,7 +4751,7 @@ func (s *PostgresStore) ListCodeAttestations(ctx context.Context) ([]CodeAttesta
 		var rec CodeAttestation
 		if err := rows.Scan(
 			&rec.SEPubKey, &rec.Version, &rec.AttestedAt,
-			&rec.APNsToken, &rec.NodePublicKey, &rec.BinaryHash,
+			&rec.APNsToken, &rec.NodePublicKey, &rec.BinaryHash, &rec.ContinuousCoverageUntil,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan code attestation: %w", err)
 		}
@@ -4771,13 +4772,19 @@ func (s *PostgresStore) UpsertCodeAttestation(ctx context.Context, rec CodeAttes
 
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO code_attestations (
-			se_pubkey, version, attested_at, apns_token, node_public_key, binary_hash
-		 ) VALUES ($1, $2, $3, $4, $5, $6)
+			se_pubkey, version, attested_at, apns_token, node_public_key, binary_hash, continuous_coverage_until
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (se_pubkey) DO UPDATE SET
 			version = $2, attested_at = $3,
-			apns_token = $4, node_public_key = $5, binary_hash = $6`,
+			apns_token = $4, node_public_key = $5, binary_hash = $6,
+			continuous_coverage_until = CASE WHEN code_attestations.attested_at = EXCLUDED.attested_at
+             AND code_attestations.version = EXCLUDED.version AND code_attestations.apns_token = EXCLUDED.apns_token
+             AND code_attestations.node_public_key = EXCLUDED.node_public_key AND code_attestations.binary_hash = EXCLUDED.binary_hash
+             THEN GREATEST(code_attestations.continuous_coverage_until,EXCLUDED.continuous_coverage_until)
+             ELSE EXCLUDED.continuous_coverage_until END
+		 WHERE code_attestations.attested_at <= EXCLUDED.attested_at`,
 		rec.SEPubKey, rec.Version, rec.AttestedAt,
-		rec.APNsToken, rec.NodePublicKey, rec.BinaryHash,
+		rec.APNsToken, rec.NodePublicKey, rec.BinaryHash, rec.ContinuousCoverageUntil,
 	)
 	if err != nil {
 		return fmt.Errorf("store: upsert code attestation: %w", err)

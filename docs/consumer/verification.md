@@ -1,6 +1,6 @@
 # Verifying provider attestation
 
-> Last updated: 2026-09-03 · commit `5d400cf75`
+> Last updated: 2026-09-07 · commit `efcde6334`
 
 How a consumer reads the coordinator's trust verdict about the provider that
 served a request, and what that verdict does and does not prove. The verdict is
@@ -110,6 +110,11 @@ switched on (`APNS_ENFORCE_AFTER`) a provider without it is excluded from
 private-text routing, so a served response implies it passed. See
 [`../design/apns-code-attestation.md`](../design/apns-code-attestation.md) and
 [`../architecture/security/attestation.md`](../architecture/security/attestation.md#flag--apns-code-identity).
+
+A coordinator reconnect still requires a fresh process-possession challenge before
+private routing. Recorded code-verified continuity can avoid another Apple push
+for the same process; it does not grant hardware trust or bypass verification.
+See [APNs code identity](../architecture/security/attestation.md#flag--apns-code-identity).
 
 ## Related
 

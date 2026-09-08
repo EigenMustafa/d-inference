@@ -217,6 +217,13 @@ func (s *Server) buildProfileRecord(rp *registry.RequestProfile, ap *registry.At
 	}
 	rec.FailedAttempts, rec.FailedAttemptsUS = rp.FailedAttempts()
 
+	mode, bypass, ceiling, budget := ap.PredictionObservation()
+	if mode != "" {
+		rec.AdmissionMode = mode
+	}
+	rec.PredictiveBypass = string(bypass)
+	rec.ReservationTTFTCeilingMs = ceiling
+	rec.DispatchBudgetMs = budget
 	if ap.DecisionSet {
 		d := ap.Decision
 		rec.CandidateSetSize = d.CandidateSetSize

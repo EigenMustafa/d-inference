@@ -1157,6 +1157,8 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		// index on these tables must be built CONCURRENTLY outside this loop
 		// (see ensureProviderEarningsJobIndex). The request_waterfall view is NOT
 		// here — it is applied by hand from store/migrations/request_waterfall.sql.
+		requestOutcomesTableDDL,
+		`CREATE INDEX IF NOT EXISTS idx_request_outcomes_received ON request_outcomes (received_at, coord_request_id)`,
 		requestProfilesTableDDL,
 		requestProfilesCreatedIndexDDL,
 		requestProfilesCoordIndexDDL,
@@ -1173,6 +1175,9 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		`DO $$ BEGIN ALTER TABLE request_profiles ADD COLUMN IF NOT EXISTS requested_max_tokens INT NOT NULL DEFAULT 0; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
 		`DO $$ BEGIN ALTER TABLE request_profiles ADD COLUMN IF NOT EXISTS requires_vision BOOL NOT NULL DEFAULT FALSE; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
 		`DO $$ BEGIN ALTER TABLE request_profiles ADD COLUMN IF NOT EXISTS has_tools BOOL NOT NULL DEFAULT FALSE; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+		`DO $$ BEGIN ALTER TABLE request_profiles ADD COLUMN IF NOT EXISTS predictive_bypass TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+		`DO $$ BEGIN ALTER TABLE request_profiles ADD COLUMN IF NOT EXISTS reservation_ttft_ceiling_ms DOUBLE PRECISION; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+		`DO $$ BEGIN ALTER TABLE request_profiles ADD COLUMN IF NOT EXISTS dispatch_budget_ms BIGINT; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
 		`DO $$ BEGIN ALTER TABLE fleet_snapshots ADD COLUMN IF NOT EXISTS provider_version TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
 		// free_for_load_gb became nullable (nil = provider did not report it); idempotent.
 		`ALTER TABLE fleet_snapshots ALTER COLUMN free_for_load_gb DROP NOT NULL`,
@@ -5646,6 +5651,9 @@ const (
 			client_gone_phase TEXT NOT NULL DEFAULT '',
 			first_content_budget_ms INT NOT NULL DEFAULT 0,
 			admission_mode TEXT NOT NULL DEFAULT '',
+			predictive_bypass TEXT NOT NULL DEFAULT '',
+			reservation_ttft_ceiling_ms DOUBLE PRECISION,
+			dispatch_budget_ms BIGINT,
 			estimated_prompt_tokens INT NOT NULL DEFAULT 0,
 			requested_max_tokens INT NOT NULL DEFAULT 0,
 			requires_vision BOOL NOT NULL DEFAULT FALSE,

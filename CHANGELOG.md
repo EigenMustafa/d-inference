@@ -3,6 +3,19 @@
 ## Unreleased — provider SSD cache disk policy
 
 - Size the shared SSD cache at half of currently available disk space without a fixed 100 GiB ceiling. Keep a fixed 20 GiB low-disk write reserve instead of reserving 5% of the whole disk, so large disks with ample free space can cache. Preserve encryption, eviction, daily write limits and ENOSPC handling.
+## Unreleased: prediction decisions and backup deadlines
+
+- Record the coordinator's prediction policy, reservation ceiling and encoded deadline budget alongside each provider's returned prediction and decision. Distinguish refusals from acceptance followed by expiry without changing error codes or prediction policy.
+- Refresh remaining time after registry/provider lock waits before reserving a retained backup candidate. Skip expired reservations and shrink an enabled prediction ceiling.
+
+## Unreleased - pending-prompt admission estimates
+
+- Estimate unreflected pending prefill from each request's own prompt size, excluding requests that already produced content. Preserve the existing proxy for unknown cache work and reflected queues, so short and long arrivals no longer inherit each other's prompt lengths when the heartbeat is idle.
+
+## Unreleased: incoming request accounting
+
+- Add the unsampled request-outcome ledger and bounded admin inspection with explicit coverage and completion evidence.
+- Record recovered HTTP errors and parsed streaming mode accurately. Distinguish completed, incomplete and error response terminals after successful writes, preserving contradictory evidence and earlier content progress.
 
 ## Unreleased — stats request-flow refresh
 

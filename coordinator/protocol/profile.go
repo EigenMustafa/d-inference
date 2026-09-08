@@ -228,6 +228,8 @@ type InferenceProfile struct {
 	ThermalState ThermalState `json:"thermal_state,omitempty"`
 	CancelStage  CancelStage  `json:"cancel_stage,omitempty"`
 
+	DeadlineDecision *DeadlineDecision `json:"deadline_decision,omitempty"`
+
 	// Engine sub-object (slice 3 fills it; slice 2 may send it empty/absent).
 	Engine *EngineProfile `json:"engine,omitempty"`
 }

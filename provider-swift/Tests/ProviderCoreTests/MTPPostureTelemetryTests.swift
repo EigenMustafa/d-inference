@@ -302,7 +302,17 @@ struct MTPPostureTelemetryTests {
     // MARK: The producer is actually wired
 
     @Test("every slot emits posture on the periodic sampler, MTP or not")
-    func periodicSamplerEmitsForEverySlot() async throws {
+    func periodicSamplerEmitsForEverySlot() async {
+        // Run the real timer on its own executor so concurrent MLX tests cannot
+        // consume the sampling deadline before its task gets scheduled.
+        await #expect(processExitsWith: .success) {
+            try await MTPPostureTelemetryTests().assertPeriodicSamplerEmitsForEverySlot()
+        }
+    }
+
+    private func assertPeriodicSamplerEmitsForEverySlot() async throws {
+        let isChildProcess = ExitTest.current != nil
+        try #require(isChildProcess)
         // The point of the ticket: these fields need a PRODUCER, and the
         // producer must be a recurring per-slot inventory rather than a
         // once-per-construction notification. Drive the real timer.
@@ -388,7 +398,16 @@ struct MTPPostureTelemetryTests {
     }
 
     @Test("shutdown stops the sampler")
-    func shutdownStopsSampler() async throws {
+    func shutdownStopsSampler() async {
+        // Keep the live-timer shutdown check isolated from other suites too.
+        await #expect(processExitsWith: .success) {
+            try await MTPPostureTelemetryTests().assertShutdownStopsSampler()
+        }
+    }
+
+    private func assertShutdownStopsSampler() async throws {
+        let isChildProcess = ExitTest.current != nil
+        try #require(isChildProcess)
         let telemetry = PostureTelemetrySink()
         let bridge = makePostureBridge(
             engine: PagedPoolStubEngine(kvBytesInUse: 0, poolBytes: 1 << 30),

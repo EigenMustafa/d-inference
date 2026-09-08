@@ -1,6 +1,6 @@
 # System profiler
 
-> Last updated: 2026-09-05 · commit `544cfa5ee`
+> Last updated: 2026-09-07 · commit `5ce1d0cd0`
 
 The profiler answers "where did the time go, and what did the router know when
 it chose?" for one request, without carrying a single prompt-derived byte. It
@@ -12,6 +12,8 @@ gets only pipeline-health counters. Wire shapes of the heartbeat sub-objects:
 [`../reference/protocol-messages.md`](../reference/protocol-messages.md); the
 outcome vocabularies the rows carry:
 [`request-outcome-observability.md`](request-outcome-observability.md).
+
+The separate [incoming-request ledger](request-accounting.md) uses compact lifecycle evidence even when heavy profiling is disabled. Its records are unsampled; this profiler's rows remain sampled and must not supply the full traffic denominator.
 
 ## Context
 
@@ -109,6 +111,15 @@ sequenceDiagram
     P-->>W: inference_complete + profile{…, engine{…}} (terminal_sent_us)
     W-->>H: complete_ingress_us → finalized_us (both halves done)
 ```
+
+### Prediction and refusal evidence
+
+The [prediction telemetry reference](../reference/prediction-decision-telemetry.md)
+defines coordinator policy/bypass, the actual writer-envelope budget, and the
+provider's optional `deadline_decision`. Returned engine evidence is recorded
+before immediate continuation checks, so a refusal can be separated from an
+acceptance followed by expiry. Existing enablement/sampling and accepted-only
+stamps remain unchanged.
 
 ### The provider `profile` object
 
@@ -359,7 +370,7 @@ to the replication set, and accepts the hourly retention DELETE volume.
    returned by value from fixed-size fields inside the existing scan loops (0
    allocations, no new lock under `r.mu`; `BenchmarkReserveProviderEx_350x2`,
    `coordinator/registry/reserve_bench_test.go`); per chunk on the WS read loop
-   = 1 clock read + 2 atomic adds; provider ≤ 30 lock ops per request, no
+   = 1 clock read + 2 atomic adds; provider ≤ 32 lock ops per request, no
    per-token lock; engine ≤ 8 clock reads per step and no added allocation.
 5. **Two knobs only.** Kill switch and sample rate; retention, cadence, batch
    sizes and always-record thresholds are constants.

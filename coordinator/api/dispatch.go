@@ -1432,6 +1432,7 @@ func (d *dispatchState) dispatchPrimary() dispatchOutcome {
 		}
 		queuePR.Timing.QueuedAt = time.Now()
 		queuePR.Profile = d.profile.NewAttempt(d.requestID, d.attempt, "")
+		d.s.recordPredictivePolicy(queuePR.Profile, d.policy, d.requiresVision)
 		queuePR.Profile.Mark(registry.StampAttemptStart)
 		queuePR.Profile.Mark(registry.StampQueued)
 		// Every exit of the queue path that never reached the wire (queue full,
@@ -1565,6 +1566,7 @@ func (d *dispatchState) dispatchPrimary() dispatchOutcome {
 			ap.Mark(registry.StampDequeued)
 			ap.Mark(registry.StampReserveDone)
 			ap.SetDecision(queuedReq.Decision)
+			ap.SetReservationTTFTCeiling(d.pr.MaxTTFTMs)
 			ap.ProviderID = d.provider.ID
 			d.provider.Mu().Lock()
 			ap.ProviderVersion = d.provider.Version
@@ -3613,6 +3615,11 @@ exhausted:
 				reason = "unservable_token_budget"
 				s.ddIncr("routing.unservable_reclassified", []string{"model:" + d.model})
 			}
+		}
+		if o := requestOutcomeFromContext(r.Context()); o != nil {
+			o.mu.Lock()
+			o.record.CoordinatorExhausted = reason == "dispatch_exhausted" && dominance == exhaustedUndecided && failure.statusCode == 0
+			o.mu.Unlock()
 		}
 		// Resolved once: the telemetry event and the OR-uptime counter must agree
 		// on which slot's backend this failure belongs to, and on whether that

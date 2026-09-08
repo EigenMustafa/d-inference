@@ -158,6 +158,7 @@ extension EngineV2Bridge {
         usageSignal: EngineV2RequestUsageSignal?
     ) async throws {
         if pendingCancellationIDs.contains(requestID) {
+            pendingProfiles[requestID]?.observeDeadlineDecision(.cancelled, deadline: deadline)
             // Refused before the engine ever sees the row: nothing was
             // generated after the cancel, so the profile records an explicit
             // `tokens_after_cancel = 0` (baseline seeded by `latchPendingCancel`).
@@ -175,6 +176,8 @@ extension EngineV2Bridge {
         do {
             try deadline?.check()
         } catch let failure as PreContentDeadlineFailure {
+            pendingProfiles[requestID]?.observeDeadlineDecision(
+                .expiredBeforeSubmit, deadline: deadline)
             await releasePreSubmitResources(
                 requestID: requestID,
                 sharedKVReserved: sharedKVReserved,

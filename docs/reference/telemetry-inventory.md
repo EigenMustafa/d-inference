@@ -1,6 +1,6 @@
 # Telemetry inventory
 
-> Last updated: 2026-09-05 · commit `055a76364`
+> Last updated: 2026-09-07 · commit `5ce1d0cd0`
 
 Every datum the system collects today, with its producer, sink, cadence and
 retention. Anything not on this page is not emitted by the code at this commit.
@@ -137,6 +137,8 @@ lists every name).
 |---|---|---|---|
 | `telemetry.sink_depth` | gauge | `sink:profile`, `sink:route` | each 60 s fleet sample |
 | `telemetry.sink_dropped` | count | `sink:profile` | non-blocking submit found the 4096-slot profile channel full (warned at powers of ten). The route sink counts drops in an atomic exposed as `fleet_snapshots.route_sink_dropped_total` and in its slog line, not as a Datadog counter |
+| `request_outcomes.received` | count | `endpoint` (four inference paths) | once on covered incoming request receipt; no request IDs in labels |
+| `request_outcomes.records` | count | `status:written`, `write_failed`, `dropped` | unsampled compact persistence snapshots, not unique request counts; [contract](../architecture/request-accounting.md) |
 | `profiler.records` | count | `status:written`, `write_failed`, `sampled_out` | each profile batch |
 | `profiler.provider_profile` | count | `valid`, `reason` (`none`, `size`, `decode`, `schema`, `range`, `order`, `enum`, `duplicate`, `late`) | each provider `profile` |
 | `profiler.fleet_snapshot` | count | `status:written`, `write_failed` | each fleet sample |

@@ -6,8 +6,10 @@ created: "2026-05-14"
 # disk) — see docs/architecture/security/encryption.md and identity-binding.md.
 # Every other entry still reflects the 2026-05-14 review and has not been
 # re-verified.
-# SSD disk-budget values updated 2026-09-05 against commit 30bdf8e7a;
-# this does not re-verify the surrounding cache threat claims.
+# SSD disk policy re-checked 2026-09-08 against PR #866 (base 4be02331e):
+# default available-disk/2 without a fixed ceiling, 20 GiB unknown-space
+# budget fallback, and a fixed 20 GiB pre-write reserve including the pending
+# donation payload. This does not re-verify the surrounding cache threat claims.
 methodology: STRIDE
 description: >
   Runtime threat model for the EigenInference / darkbloom decentralized GPU inference
@@ -1695,9 +1697,13 @@ threats:
         (b) The at-rest window is bounded by a 15-MINUTE sliding TTL
             (DARKBLOOM_PREFIX_CACHE_SSD_TTL_SECONDS can only shorten it;
             sliding on hit; opportunistic sweep on write + periodic task);
-            a default 100 GiB box-wide LRU disk budget, limited to half the
-            currently available disk space, unlinks oldest-by-last-hit.
+            a default box-wide LRU disk budget of half the currently available
+            disk space, with no fixed ceiling, unlinks oldest-by-last-hit.
+            Unknown available space uses a 20 GiB budget fallback.
             DARKBLOOM_PREFIX_CACHE_DISK_GB overrides that default budget.
+            The separate fixed 20 GiB pre-write free-space reserve includes
+            the pending donation payload; it does not reserve OS disk blocks
+            against unrelated concurrent writers.
         (c) File crypto is the reviewed legacy scheme unchanged: per-file
             random DEK wrapped AES-256-GCM under the SE-rooted KEK,
             HKDF-derived per-chunk nonces ("dbkv-chunk-v3"), canonical
@@ -1772,8 +1778,10 @@ threats:
         status: implemented
       - description: >
           SSD tier at-rest window bound: 15-minute sliding TTL (env can only
-          shorten), default min(100 GiB, available-disk/2) box-wide LRU disk
-          budget (DARKBLOOM_PREFIX_CACHE_DISK_GB overrides), verified weightHash in
+          shorten), default available-disk/2 box-wide LRU disk budget without
+          a fixed ceiling (20 GiB fallback when unavailable;
+          DARKBLOOM_PREFIX_CACHE_DISK_GB overrides), a fixed 20 GiB pre-write
+          free-space reserve including the pending donation payload, verified weightHash in
           coordinator mode (model-ID fallback in standalone) + layoutEpoch
           fail-closed bindings, and KEK-wipe purge (files become unreadable AND
           unfindable — K_lookup derives from the KEK).

@@ -5,6 +5,11 @@
 - Preserve unchanged models' cache holders and receipts when another model loads or changes, and keep proof-mismatch fences across unrelated capability updates. Report bounded receipt rejection reasons and separate proof mismatch from ordinary holder changes.
 - Persist verified same-process APNs continuity for bounded coordinator reconnects without refreshing the original Apple proof timestamp. Preserve encrypted resume challenges, token/process/binary binding, new-process freshness checks and Apple push budgets. Stamp final continuity after the socket is marked offline while keeping periodic updates online-only.
 
+## Unreleased — provider SSD cache disk policy
+
+- Size the shared SSD cache at half of currently available disk space without a fixed 100 GiB ceiling. Keep a fixed 20 GiB low-disk write reserve instead of reserving 5% of the whole disk, so large disks with ample free space can cache. Preserve encryption, eviction, daily write limits and ENOSPC handling.
+- Check the full pending SSD donation against free space above the reserve before writing, so a donation cannot pass merely because free space starts above 20 GiB.
+
 ## Unreleased: prediction decisions and backup deadlines
 
 - Record the coordinator's prediction policy, reservation ceiling and encoded deadline budget alongside each provider's returned prediction and decision. Distinguish refusals from acceptance followed by expiry without changing error codes or prediction policy.

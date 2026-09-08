@@ -1,6 +1,6 @@
 # SSD KV cache reference
 
-> Last updated: 2026-09-06 · commit `e21e4cc75`
+> Last updated: 2026-09-07 · commit `0b46b1618`
 
 Exact on-disk format, paths, identity binding, environment knobs, size and
 eviction rules, and per-family reuse capability of the provider's encrypted SSD
@@ -187,12 +187,12 @@ All constants are code constants of `SSDPrefixCachePolicy` and
 
 | Rule | Constant | Code |
 |---|---|---|
-| Disk budget | `defaultSSDDiskBudgetBytes = 100 * 1_073_741_824` (100 GiB); default `max(1, min(defaultSSDDiskBudgetBytes, volumeFree / 2))`, re-evaluated during enforcement across all models. Unknown free space uses the fixed default; a valid positive environment override wins verbatim. | `PrefixCachePolicy.swift` (`ssdDiskBudgetBytes`) |
+| Disk budget | Default `max(1, volumeFree / 2)`, with no fixed ceiling, re-evaluated during enforcement across all models. Unknown free space uses `fallbackSSDDiskBudgetBytes = 20 * 1_073_741_824` (20 GiB); a valid positive environment override wins verbatim. The separate low-disk write stop still applies. | `PrefixCachePolicy.swift` (`ssdDiskBudgetBytes`) |
 | Eviction order | LRU by last hit across the whole `kv3/` root; eviction is `unlink` + index removal | `provider-swift/Sources/ProviderCore/KVCacheSSD/SSDBlockIndex.swift` |
 | Maintenance sweep | `SSDWholeRootMaintainer`, `intervalSeconds = 60`: TTL expiry, budget eviction, crash-temp cleanup | `SSDPrefixCacheFactory.swift` (`startWholeRootMaintenance`), `provider-swift/Sources/ProviderCore/KVCacheSSD/SSDWholeRootMaintainer.swift` |
 | TTL | `defaultTTLSeconds = 900`, `maxTTLSeconds = 900`, sliding on hit | `SSDPrefixCachePolicy.swift` |
 | Daily write cap | `defaultMaxWriteBytesPerDay = 150 * 1_000_000_000` | `SSDPrefixCachePolicy.swift` |
-| Low-disk write stop | `lowDiskFloorBytes = max(lowDiskAbsoluteFloorBytes = 20 * 1_073_741_824, lowDiskCapacityFraction = 0.05 × volume)`; reads continue; ENOSPC starts `enospcCooldownSeconds = 600` | `SSDPrefixCachePolicy.swift` |
+| Low-disk write stop | `lowDiskFloorBytes = lowDiskAbsoluteFloorBytes = 20 * 1_073_741_824` (20 GiB), independent of total disk capacity; reads continue; ENOSPC starts `enospcCooldownSeconds = 600` | `SSDPrefixCachePolicy.swift` |
 | Payload/staging cap | `defaultMaxStageBytes = 1024 * 1_048_576`; `defaultMaxStageMillis = 1000` at `conservativeStageBytesPerSecond = 1_500_000_000` | `SSDPrefixCachePolicy.swift` |
 | Attention donation floor | `prefixTokens > adoptionBoundTokens + minEffectiveTokens`, whole blocks only; `defaultMinEffectiveTokens = 1024`, raised to 1_536 for `.frozenFullReplay` with bound ≥ 25_600 | `SSDPrefixCache.swift` (`donate`), `PrefixCachePolicy.swift` |
 | Write-behind queue | `writeQueueMaxJobs = 2`, `writeQueueMaxBytes = 512 * 1_048_576`, `writeQueueSlackBytes = 256 * 1_048_576`; overflow drops the donation | `SSDPrefixCachePolicy.swift`, `provider-swift/Sources/ProviderCore/KVCacheSSD/SSDWriteBehind.swift` |

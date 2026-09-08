@@ -7,9 +7,9 @@ import "time"
 // overlapping subsets of these gates:
 //
 //   - providerPassesRoutingGatesLockedEx (scheduler.go) — dispatch hot path
-//   - providerCanRouteBuildLocked        (registry.go)  — alias routability
-//   - providerHasWarmModelLocked         (registry.go)  — warm detection
-//   - publiclyRoutableLocked             (registry.go)  — public capacity feeds
+//   - providerCanRouteBuildLocked        (model_aliases.go)  — alias routability
+//   - providerHasWarmModelLocked         (model_loading.go)  — warm detection
+//   - publiclyRoutableLocked             (model_capacity.go)  — public capacity feeds
 //   - warmPoolCandidateReasonLocked      (warm_pool_controller.go) — warming
 //
 // (plus modelLoadCandidatePendingLocked, the load planner). They share two
@@ -65,7 +65,7 @@ func (r *Registry) providerLivenessGateReasonLocked(p *Provider, minTrust TrustL
 	if !p.RuntimeVerified {
 		return false, GateRuntimeUnverified
 	}
-	if !r.providerSupportsPrivateTextLocked(p) {
+	if !r.providerSupportsPrivateTextAtLocked(p, now) {
 		return false, GatePrivateText
 	}
 	if p.LastChallengeVerified.IsZero() || now.Sub(p.LastChallengeVerified) > challengeFreshnessMaxAge {

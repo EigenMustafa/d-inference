@@ -30,7 +30,7 @@ extension ProviderLoop {
 
         // Maintain the entire encrypted SSD-cache root even when no model is
         // loaded. This is metadata/file-only work: no weights or KV arrays are
-        // constructed. It closes TTL and 20 GiB budget gaps for unloaded dirs.
+        // constructed. It closes TTL and shared disk-budget gaps for unloaded dirs.
         SSDPrefixCacheFactory.startWholeRootMaintenance()
         defer { SSDPrefixCacheFactory.stopWholeRootMaintenance() }
 
@@ -156,7 +156,8 @@ extension ProviderLoop {
             runtimeCapabilities: loopConfig.runtimeCapabilities,
             privateOnly: loopConfig.config.coordinator.privateOnly,
             apnsDeviceToken: apnsDeviceToken,
-            apnsEnvironment: apnsDeviceToken != nil ? "production" : nil
+            apnsEnvironment: apnsDeviceToken != nil ? "production" : nil,
+            idleUnloadMins: loopConfig.config.backend.idleTimeoutMins
         )
 
         // 4. Create coordinator client and start connection
@@ -233,7 +234,7 @@ extension ProviderLoop {
                     // (see `fireRetirementReconnect`) lifts with the new
                     // session: the register it carried excluded every
                     // retired id, so routed work is safe to admit again.
-                    isReconnectingAfterRetirement = false
+                    setRetirementReconnectBarrier(false)
 
                 case .disconnected:
                     logger.warning(.coordinatorDisconnected)
@@ -244,6 +245,7 @@ extension ProviderLoop {
                 case .inferenceRequest(
                     let requestId, let ciphertext, let senderPublicKey,
                     let cacheReceiptNonce, let cacheScope, let prefixCacheProtocol,
+                    let cacheReceiptBoundaryMode,
                     let toolSchemaMetadataProtocol, let firstContentDeadline,
                     let receivedAt,
                     let profile
@@ -255,6 +257,7 @@ extension ProviderLoop {
                         cacheReceiptNonce: cacheReceiptNonce,
                         authenticatedCacheScope: cacheScope,
                         prefixCacheProtocol: prefixCacheProtocol,
+                        cacheReceiptBoundaryMode: cacheReceiptBoundaryMode,
                         toolSchemaMetadataProtocol: toolSchemaMetadataProtocol,
                         firstContentDeadline: firstContentDeadline,
                         receivedAt: receivedAt,

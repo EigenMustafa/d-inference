@@ -4,7 +4,7 @@
 // telemetry for offline analysis and calibration. They are admin-gated and
 // metadata-only: no prompt or response content is recorded or exported, so
 // every column is safe to download in bulk. See
-// docs/architecture/routing-telemetry-and-calibration.md.
+// docs/design/routing-telemetry-and-calibration.md.
 
 package api
 
@@ -244,7 +244,7 @@ func filterRejectionRecords(in []store.RejectionRecord, reason, model, couldHave
 		if model != "" && rec.RequestedModel != model && rec.ResolvedModel != model {
 			continue
 		}
-		if wantServed != nil && rec.CouldHaveServed != *wantServed {
+		if wantServed != nil && (rec.CouldHaveServed == nil || *rec.CouldHaveServed != *wantServed) {
 			continue
 		}
 		out = append(out, rec)
@@ -455,7 +455,7 @@ func rejectionCSVRow(rec store.RejectionRecord) []string {
 		string(rec.Params),
 		csvInt(rec.RequestBodyBytes),
 		csvInt(rec.RetryAfterMs),
-		csvBool(rec.CouldHaveServed),
+		csvOptionalBool(rec.CouldHaveServed),
 		csvInt(rec.CandidateCount),
 		csvInt(rec.CapacityRejections),
 		csvInt(rec.ModelTooLargeRejections),
@@ -481,4 +481,12 @@ func csvTime(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
+}
+
+// An empty CSV cell, like JSON null and SQL NULL, denotes unknown servability.
+func csvOptionalBool(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	return csvBool(*value)
 }

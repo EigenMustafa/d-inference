@@ -193,7 +193,8 @@
     "provider.register": "register + heartbeat + capacity",
     "provider.socket": "WSS /ws/provider",
     "provider.trust": "attestation/trust/runtime status",
-    "mdm.client": "MicroMDM client state (waiters, command tracking)"
+    "mdm.client": "MicroMDM client state (waiters, command tracking)",
+    "mem.outcomes": "Per-request outcome records + unsampled sink"
   },
   "depDocs": {
     "ext.apple": {
@@ -538,6 +539,20 @@
         "coordinator/registry/pending_model_loads.go:1"
       ]
     },
+    "mem.outcomes": {
+      "overview": "The unsampled per-request outcome ledger: one in-memory record per inference request received, batched to PostgreSQL off the request path.",
+      "represents": "A bounded channel of store.RequestOutcomeRecord plus the per-request requestOutcome accumulator carried on the request context, and four atomic counters (received, written, dropped, write-failed). It is not a queryable collection — the durable answer is pg.request_outcomes.",
+      "construction": "Server.requestOutcomes is a requestOutcomeSink created at startup with defaultTelemetrySinkCapacity; its goroutine accumulates up to 128 records and flushes on a 100ms ticker under a 1s store timeout.",
+      "access": "Inference middleware attaches a requestOutcome to the request context and publishes it immediately, so a request that never reaches a terminal is still on record; attempt and terminal hooks refresh it and publish again, each publication carrying a higher revision. GET /v1/admin/request-outcomes reports the four counters and the current queue depth from here while reading the records themselves from PostgreSQL.",
+      "concurrency": "Deliberately a separate queue from the profiler and routing-telemetry sinks, so their loss stays independent of this ledger's. submit never blocks or does store IO on the request path: a full channel drops the record and increments request_outcomes.records status:dropped. An RWMutex orders close against in-flight submits; each record's own mutex guards its accumulation.",
+      "lifecycle": "A record sits in the queue for at most one flush tick. close() stops the loop and waits up to 2s for the drain, warning with the dropped and still-queued counts if that window expires.",
+      "restart": "Starts empty. Anything unflushed at shutdown is lost by design — persistence is best-effort and unsampled, which is why the admin endpoint labels its own coverage and persistence guarantees.",
+      "sources": [
+        "coordinator/api/request_outcome.go:16",
+        "coordinator/api/request_outcome_sink.go:14",
+        "coordinator/api/server.go:502"
+      ]
+    },
     "mem.pending": {
       "overview": "The rendezvous state connecting one dispatched inference request to asynchronous provider frames.",
       "represents": "A PendingRequest per request ID, containing accepted, chunk, completion, and error signaling plus terminal/accounting state. Providers also index their pending requests.",
@@ -614,12 +629,13 @@
       "overview": "A small shared TTL cache for expensive read-heavy JSON responses.",
       "represents": "Serialized response bytes keyed by semantic names such as stats, leaderboard, network totals, release and runtime-manifest keys.",
       "construction": "api.ttlCache owns a map of value + expiry and is created once on Server.",
-      "access": "Handlers perform Get, compute on miss, then Set with endpoint-specific TTL; mutation paths call Invalidate. Expired entries are rejected/removed lazily.",
-      "concurrency": "An RWMutex protects the map. Many HTTP goroutines can read; a miss can still cause duplicate concurrent fills because this is not singleflight.",
+      "access": "Handlers perform Get, compute on miss, then Set with endpoint-specific TTL; mutation paths call Invalidate. Expired entries are rejected/removed lazily. The entries expensive enough to be worth coalescing are filled through a refresher rather than inline: statsRefresh owns the stats:v1 entry and networkTotalsRefresh one entry per window.",
+      "concurrency": "An RWMutex protects the map, so many HTTP goroutines can read at once. The cache itself does not deduplicate fills — a plain Get/compute/Set miss can be computed twice — but the entries that matter do not use that path: each cacheRefresher coalesces concurrent computations of its one entry, and the /v1/me summary windows go through a singleflight.Group.",
       "lifecycle": "Endpoint TTLs range from short operational snapshots to minutes; invalidation is explicit at mutation boundaries.",
       "restart": "Starts empty and repopulates from durable/live sources.",
       "sources": [
         "coordinator/api/cache.go:16",
+        "coordinator/api/cache_refresher.go:1",
         "coordinator/api/leaderboard.go:67",
         "coordinator/api/release_handlers.go:461"
       ]
@@ -943,6 +959,31 @@
         "coordinator/api/profiler_fleet.go:51"
       ]
     },
+    "pg.global_payout_recipients": {
+      "overview": "The global_payout_recipients PostgreSQL table: one Stripe Global Payouts recipient per provider account.",
+      "represents": "account_id as the primary key, the recipient's country, and the recipient record as JSONB (onboarding readiness, destination metadata, Stripe ids). This node represents SQL rows and indexes, not a Go object or cache.",
+      "construction": "Declared and migrated by PostgresStore alongside the withdrawal table; created and refreshed through the typed coordinator/store recipient methods as onboarding progresses.",
+      "access": "Read when quoting or submitting a payout, and inside the payout transaction with FOR SHARE so a recipient cannot change country mid-withdrawal; upserted on onboarding, updated by id after a Stripe refresh, deleted when an account detaches.",
+      "concurrency": "Concurrency is owned by the store: the upsert keeps the existing record when the country matches and replaces it when it does not, the update is guarded by the recipient id, and the payout path takes a share lock rather than mutating.",
+      "lifecycle": "Rows survive process restarts and outlive individual withdrawals; a row is removed only when the account's payout destination is deleted.",
+      "restart": "See the category durability rule; durable truth is reloaded, external/protocol state is re-established.",
+      "sources": [
+        "coordinator/store/global_payouts_postgres.go:15",
+        "coordinator/store/global_payouts_recipients_postgres.go:13"
+      ]
+    },
+    "pg.global_payout_withdrawals": {
+      "overview": "The global_payout_withdrawals PostgreSQL table: every Global Payouts quote and withdrawal, from quoted through pending, processing and posted to failed.",
+      "represents": "One row per payout id with account_id, status, the Stripe outbound-payment external_id, submitted_at, checked_at, a reconciler lease_until, a quote expires_at, and the payout itself as JSONB. This node represents SQL rows and indexes, not a Go object or cache.",
+      "construction": "Declared and migrated by PostgresStore, with a unique index on non-empty external_id, an account history index, a partial expiry index over quoted rows and a partial reconcile index over the states the reconciler still polls (pending, processing and posted). Rows are created by the quote endpoint and mutated only through the typed store methods.",
+      "access": "Written when a quote is persisted and on every status transition; read by the provider's withdrawal history (quotes excluded), by the reconciler's due-work scan, and by the webhook's external-id lookup. Status changes run inside a transaction that selects the row FOR UPDATE first.",
+      "concurrency": "Concurrency is owned by the store. The unique external_id index makes the Stripe id the idempotency key, the row lock serializes a webhook against the reconciler and against the submit path, and lease_until keeps two reconciler passes from claiming the same row.",
+      "lifecycle": "Rows survive process restarts. Quoted rows expire by expires_at rather than being deleted; the reconcile scan looks back 90 days for posted payouts and keeps polling pending and processing ones until Stripe is terminal.",
+      "restart": "See the category durability rule; durable truth is reloaded, external/protocol state is re-established.",
+      "sources": [
+        "coordinator/store/global_payouts_postgres.go:18"
+      ]
+    },
     "pg.inference_routes": {
       "overview": "The inference_routes PostgreSQL table.",
       "represents": "Durable inference routes records used by the coordinator. This node represents SQL rows and indexes—not a Go object or cache.",
@@ -1229,6 +1270,18 @@
       "restart": "See the category durability rule; durable truth is reloaded, external/protocol state is re-established.",
       "sources": [
         "coordinator/store/postgres.go:1"
+      ]
+    },
+    "pg.request_outcomes": {
+      "overview": "The request_outcomes PostgreSQL table: the compact, unsampled ledger of what became of every inference request the coordinator accepted.",
+      "represents": "One row per coordinator request id — a BIGSERIAL surrogate key, received_at, updated_at, a monotonic revision, an evidence_conflict flag, and the outcome snapshot as JSONB. This node represents SQL rows and indexes, not a Go object or cache.",
+      "construction": "Declared and migrated by PostgresStore (requestOutcomesTableDDL); rows only ever arrive through RecordRequestOutcomes, one transaction per batch drained from mem.outcomes.",
+      "access": "Written by the outcome sink's flush loop; read by GET /v1/admin/request-outcomes over a half-open received_at window, ordered by (received_at, coord_request_id) under a row cap.",
+      "concurrency": "Concurrency is owned by the store. A batch is one transaction, so a failed flush stays retryable; the upsert keeps the highest revision, so a duplicate or stale snapshot is harmless, and two differing observations at the same revision — or a changed received_at or endpoint — set evidence_conflict instead of silently overwriting.",
+      "lifecycle": "Rows survive process restarts, but coverage does not extend to records the in-memory queue dropped; the window is bounded only by the read, not by a retention job.",
+      "restart": "See the category durability rule; durable truth is reloaded, external/protocol state is re-established.",
+      "sources": [
+        "coordinator/store/postgres_request_outcomes.go:13"
       ]
     },
     "pg.request_profiles": {
@@ -2333,6 +2386,12 @@
         },
         "coordinator/store:PostgresStore.RequestProfilesSinceFiltered": {
           "request_profiles": "R"
+        },
+        "coordinator/store:PostgresStore.listGlobalPayouts": {
+          "global_payout_withdrawals": "R"
+        },
+        "coordinator/store:PostgresStore.execInferenceRouteInsert": {
+          "inference_routes": "W"
         }
       }
     },
@@ -2396,6 +2455,7 @@
       "coordinator/api:Server.minProviderVersion": "@skip",
       "coordinator/api:Server.modelAliasMutationMu": "mem.alias_lock",
       "coordinator/api:Server.mux": "@skip",
+      "coordinator/api:Server.networkTotalsRefresh": "mem.read_cache",
       "coordinator/api:Server.outputAdmissionEstimator": "mem.token_limits",
       "coordinator/api:Server.pendingHardUntrustKeyHashes": "mem.trust_reuse",
       "coordinator/api:Server.privyAuth": "ext.privy",
@@ -2417,6 +2477,7 @@
       "coordinator/api:Server.releasePolicySyncMu": "mem.hash_policy",
       "coordinator/api:Server.releaseTrustPolicy": "mem.hash_policy",
       "coordinator/api:Server.releaseTrustPolicyGeneration": "mem.hash_policy",
+      "coordinator/api:Server.requestOutcomes": "mem.outcomes",
       "coordinator/api:Server.routeLatencyEWMAMs": "mem.route_latency",
       "coordinator/api:Server.routeLatencyMu": "mem.route_latency",
       "coordinator/api:Server.routeTelemetry": "mem.route_sink",
@@ -2428,8 +2489,10 @@
       "coordinator/api:Server.settleGrace": "@skip",
       "coordinator/api:Server.settlements": "mem.settlements",
       "coordinator/api:Server.skipChallenge": "@skip",
+      "coordinator/api:Server.statsRefresh": "mem.read_cache",
       "coordinator/api:Server.store": "@sql",
       "coordinator/api:Server.storedProviders": "mem.stored_providers",
+      "coordinator/api:Server.summaryWindowsFlights": "mem.read_cache",
       "coordinator/api:Server.telemetryLimiter": "mem.telemetry_limit",
       "coordinator/api:Server.trustAuthority": "mem.trust_reuse",
       "coordinator/api:Server.trustAuthorityMu": "mem.trust_reuse",
@@ -2498,6 +2561,7 @@
       "coordinator/auth": "@skip",
       "coordinator/apns": "@skip",
       "coordinator/billing": "@skip",
+      "coordinator/billing/globalpayouts": "@skip",
       "coordinator/config": "@skip",
       "coordinator/datadog": "@skip",
       "coordinator/env": "@skip",
@@ -2531,6 +2595,10 @@
       "coordinator/api:hedgeGovernor": "mem.capacity",
       "coordinator/api:codeAttestThrottle": "mem.code_attest",
       "coordinator/api:trustReuseCache": "mem.trust_reuse",
+      "coordinator/api:cacheRefresher": "mem.read_cache",
+      "coordinator/api:profileSink": "mem.profiler",
+      "coordinator/api:requestOutcome": "mem.outcomes",
+      "coordinator/api:requestOutcomeSink": "mem.outcomes",
       "coordinator/api:mdmVerificationScheduler": "mdm.waiters",
       "coordinator/api:serviceReservationManager": "mem.service_reservations",
       "coordinator/registry:Registry": "mem.registry",
@@ -2539,8 +2607,16 @@
       "coordinator/registry:PendingRequest": "mem.pending",
       "coordinator/registry:QueuedRequest": "mem.queue",
       "coordinator/registry:DispatchPlan": "mem.dispatch",
+      "coordinator/registry:disconnectedGateBinding": "mem.registry",
+      "coordinator/registry:gateState": "mem.registry",
+      "coordinator/registry:providerModelIndex": "mem.registry",
+      "coordinator/registry:modelSwapPlanGate": "mem.model_state",
+      "coordinator/registry:queueDrainCoalescer": "mem.queue",
+      "coordinator/registry:queueDrainSuppressor": "mem.queue",
       "coordinator/registry:cacheActivationGate": "mem.cache_routing",
       "coordinator/registry:cacheRoutingTracker": "mem.cache_routing",
+      "coordinator/registry:cacheAttemptOwner": "mem.cache_routing",
+      "coordinator/registry:cacheRoutingGeneration": "mem.cache_routing",
       "coordinator/registry:pendingQuote": "mem.capacity",
       "coordinator/registry:quoteTracker": "mem.capacity",
       "coordinator/registry:providerWriter": "mem.provider_writer",
@@ -2818,6 +2894,13 @@
         "Administrator"
       ]
     },
+    "GET /v1/admin/request-outcomes": {
+      "description": "Browses the unsampled per-request outcome ledger — one record per inference request received — with the sink's own delivery counters alongside it.",
+      "details": "Query: since (Go duration or RFC3339), until (RFC3339, default now), limit (capped at 1000); since must precede until. The response states its own coverage (observed_received_cohort) and persistence (unsampled_best_effort), carries possibly_truncated when the limit bound, and includes process_counters — received, snapshots_written, snapshots_dropped, snapshots_write_failed, snapshots_queued — so a gap can be told from a drop.",
+      "callers": [
+        "Administrator"
+      ]
+    },
     "DELETE /v1/admin/releases": {
       "description": "Deactivates a provider release.",
       "callers": [
@@ -2931,8 +3014,22 @@
         "Provider dashboard"
       ]
     },
+    "POST /v1/billing/stripe/global/webhook": {
+      "description": "Consumes and verifies Stripe Global Payouts outbound-payment webhooks, then reconciles the matching withdrawal row.",
+      "details": "Requires billing, a Global Payouts client and a webhook secret, else 503; payout storage is checked again after verification and 503s on its own. Body is capped at 1 MiB and the Stripe-Signature header must verify. Events whose type does not contain outbound_payment. — or whose object id is not an obp_ id, or whose payout row has not been persisted yet — are acknowledged with 200 and left to the reconciler; otherwise the payout is synced, and a sync failure returns 500 so Stripe retries delivery.",
+      "callers": [
+        "Stripe"
+      ]
+    },
     "POST /v1/billing/stripe/onboard": {
       "description": "Starts Stripe Connect Express onboarding for provider payouts.",
+      "callers": [
+        "Provider dashboard"
+      ]
+    },
+    "POST /v1/billing/stripe/quote": {
+      "description": "Quotes a Global Payouts withdrawal for the caller: locks an FX rate with Stripe and persists the quote for a later submit.",
+      "details": "Body {amount_usd}, capped at 4096 bytes: at most two decimal places and between $1 and $1,000,000, else 400. Requires payout storage and Global Payouts enabled (503), an onboarded recipient (409 not_onboarded), and an amount inside the USD pre-FX policy bounds; Stripe's own amount_too_small/amount_too_large codes are mapped back to those policy limits. The quote expires at the earlier of two minutes and the FX lock, and is rejected outright if that leaves under five seconds. Returns the quote id, amount_usd and a zero fee_usd, the destination amount, currency and exponent, expires_at, destination_last4 and a 1–7 business day ETA.",
       "callers": [
         "Provider dashboard"
       ]

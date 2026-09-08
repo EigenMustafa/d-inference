@@ -42,6 +42,7 @@ type Store interface {
 	APIKeyStore
 	UsageStore
 	TelemetryStore
+	RequestOutcomeStore
 	LedgerStore
 	BillingStore
 	ModelRegistryStore
@@ -234,6 +235,24 @@ type InferenceRouteOutcome struct {
 	// is loud rather than silent. json:"-" keeps it out of every API payload and
 	// neither store impl persists it.
 	InvalidTTFT bool `json:"-"`
+
+	// QueueExit is a transient (never-persisted) marker on the terminal outcome
+	// of a request that left the coordinator queue without a provider attempt
+	// being dispatched (client gone, queue_deadline, queue_timeout,
+	// ttft_too_slow, tool-constraint unavailable). The route-outcome funnel
+	// counts such an exit on inference.queue_outcome instead of
+	// inference.attempt_outcome, so the per-model attempt denominator only
+	// counts attempts a provider actually received.
+	QueueExit bool `json:"-"`
+}
+
+// InferenceRouteOutcomeUpdate is one outcome update addressed to a route row,
+// used by the batched UpdateInferenceRouteOutcomes path. It carries exactly the
+// arguments of UpdateInferenceRouteOutcome; Outcome nil is skipped.
+type InferenceRouteOutcomeUpdate struct {
+	RequestID string
+	Attempt   int
+	Outcome   *InferenceRouteOutcome
 }
 
 // RejectionRecord captures a single rejected inbound inference request (4xx/5xx)
@@ -269,8 +288,9 @@ type RejectionRecord struct {
 	RequestBodyBytes      int             `json:"request_body_bytes,omitempty"`
 	RetryAfterMs          int             `json:"retry_after_ms,omitempty"`
 
-	// Counterfactual servability — "could it have produced output?"
-	CouldHaveServed         bool    `json:"could_have_served"`
+	// Counterfactual servability: nil means not evaluated; only a non-nil
+	// value answers whether the fleet could have produced output.
+	CouldHaveServed         *bool   `json:"could_have_served"`
 	CandidateCount          int     `json:"candidate_count"`
 	CapacityRejections      int     `json:"capacity_rejections"`
 	ModelTooLargeRejections int     `json:"model_too_large_rejections"`
@@ -628,18 +648,19 @@ type ModelRegistryEntry struct {
 
 // ModelVersion is an uploaded manifest version for a registered model.
 type ModelVersion struct {
-	ID              int64          `json:"id"`
-	ModelID         string         `json:"model_id"`
-	Version         string         `json:"version"`
-	R2Prefix        string         `json:"r2_prefix"`
-	AggregateSHA256 string         `json:"aggregate_sha256"`
-	TotalSizeBytes  int64          `json:"total_size_bytes"`
-	FileCount       int            `json:"file_count"`
-	Status          string         `json:"status"`
-	UploadedBy      string         `json:"uploaded_by,omitempty"`
-	UploadedAt      time.Time      `json:"uploaded_at"`
-	PromotedAt      *time.Time     `json:"promoted_at,omitempty"`
-	Metadata        map[string]any `json:"metadata"`
+	HuggingFaceArtifact *HuggingFaceArtifact `json:"hugging_face_artifact,omitempty"`
+	ID                  int64                `json:"id"`
+	ModelID             string               `json:"model_id"`
+	Version             string               `json:"version"`
+	R2Prefix            string               `json:"r2_prefix"`
+	AggregateSHA256     string               `json:"aggregate_sha256"`
+	TotalSizeBytes      int64                `json:"total_size_bytes"`
+	FileCount           int                  `json:"file_count"`
+	Status              string               `json:"status"`
+	UploadedBy          string               `json:"uploaded_by,omitempty"`
+	UploadedAt          time.Time            `json:"uploaded_at"`
+	PromotedAt          *time.Time           `json:"promoted_at,omitempty"`
+	Metadata            map[string]any       `json:"metadata"`
 }
 
 // ModelVersionFile is one file in a model version manifest.
@@ -825,6 +846,16 @@ type ProviderEarningsSummary struct {
 	TotalMicroUSD    int64 `json:"total_micro_usd"`
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
+}
+
+// AccountEarningsWindows holds an account's rolling-window earnings (row count
+// and micro-USD sum over the last 24 h and the last 7 d) as computed by the
+// store, so the dashboard header never sums a truncated row page.
+type AccountEarningsWindows struct {
+	Last24hMicroUSD int64 `json:"last_24h_micro_usd"`
+	Last24hJobs     int64 `json:"last_24h_jobs"`
+	Last7dMicroUSD  int64 `json:"last_7d_micro_usd"`
+	Last7dJobs      int64 `json:"last_7d_jobs"`
 }
 
 // ProviderPayout records a provider payout event. This is separate from

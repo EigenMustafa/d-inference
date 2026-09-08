@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -130,6 +131,17 @@ func main() {
 		})
 	}
 
+	// Read-through cache for the per-request user and model-registry lookups
+	// (one Postgres round trip each, 4-5 per inference request). Wraps both
+	// backends so dev/test and prod behave identically. Invalidation is
+	// in-process -- correct because this single process serves every admin and
+	// publish mutation; the TTLs only bound staleness from out-of-band DB edits.
+	cacheCfg := store.DefaultCacheConfig()
+	st = store.NewCached(st, cacheCfg)
+	logger.Info("store read-through cache enabled",
+		"user_ttl", cacheCfg.UserTTL, "model_ttl", cacheCfg.ModelTTL, "negative_ttl", cacheCfg.NegativeTTL,
+		"max_users", cacheCfg.MaxUsers, "max_models", cacheCfg.MaxModels)
+
 	// Reconcile provider sessions left open by a previous coordinator process
 	// (durable uptime history). Best-effort + time-bounded — neither an error nor
 	// a slow/unresponsive DB must block startup. Only sessions whose last
@@ -206,6 +218,8 @@ func main() {
 	cacheRoutingCfg := reg.CacheRoutingConfigSnapshot()
 	logger.Info("provider-confirmed cache routing configured",
 		"mode", cacheRoutingCfg.Mode,
+		"artifact_allowlist_configured", cacheRoutingCfg.AllowedArtifacts != nil,
+		"artifact_allowlist_count", len(cacheRoutingCfg.AllowedArtifacts),
 		"activation_percent", cacheRoutingCfg.ActivationPct,
 		"max_plan_qps", cacheRoutingCfg.MaxPlanQPS,
 		"ttl", cacheRoutingCfg.TTL.String(),
@@ -658,15 +672,13 @@ func main() {
 	// routing (but not disconnected) and receive feedback about mismatches.
 	// Python/runtime hashes are deprecated — only template hashes (e.g. mlx_metallib) are checked.
 	if templateHashes := os.Getenv("EIGENINFERENCE_KNOWN_TEMPLATE_HASHES"); templateHashes != "" {
-		manifest := &api.RuntimeManifest{
-			PythonHashes:   make(map[string]bool),
-			RuntimeHashes:  make(map[string]bool),
-			TemplateHashes: make(map[string]string),
-		}
+		// The manifest is a set per template name: repeating a name
+		// (mlx_metallib=<a>,mlx_metallib=<b>) accepts every listed hash.
+		manifest := api.NewRuntimeManifest()
 		for _, pair := range strings.Split(templateHashes, ",") {
 			parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 			if len(parts) == 2 {
-				manifest.TemplateHashes[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				manifest.AddTemplateHash(parts[0], parts[1])
 			}
 		}
 		srv.SetRuntimeManifest(manifest)
@@ -697,6 +709,7 @@ func main() {
 		if ln, err := startPprofListener(addr); err != nil {
 			logger.Error("pprof listener failed to start", "addr", addr, "error", err)
 		} else {
+			enableContentionProfiling()
 			logger.Warn("pprof debug listener ENABLED via EIGENINFERENCE_PPROF_ADDR — profiling data is sensitive; keep this address private (bind loopback / firewall it)",
 				"addr", ln.Addr().String())
 		}
@@ -864,6 +877,10 @@ func main() {
 	// Reclaim expired read-cache entries periodically (bounds memory growth).
 	go srv.StartReadCacheJanitor(ctx)
 
+	// Background goroutines own the /v1/stats and /v1/network/totals cache
+	// entries; handlers only read them.
+	srv.StartCacheRefreshers(ctx)
+
 	// Flag any model decoding far below its active-param/hardware class (W8 —
 	// auto-detects the gemma-dense decode bug). Spawns its own panic-safe loop.
 	srv.StartThroughputAnomalyDetector(ctx)
@@ -877,6 +894,7 @@ func main() {
 	// manual payout schedule and alerts on withdrawals stuck in "transferred".
 	// No-op when Stripe Connect isn't configured. Spawns its own panic-safe loop.
 	srv.StartStripePayoutReconciler(ctx)
+	srv.StartGlobalPayoutReconciler(ctx)
 
 	// HTTP server with graceful shutdown.
 	httpServer := &http.Server{
@@ -1094,6 +1112,16 @@ func loadAPNsAttestor(logger *slog.Logger) *apns.APNsPushAttestor {
 		return nil
 	}
 	return attestor
+}
+
+// enableContentionProfiling turns on the runtime's mutex and block profiles,
+// which are off by default, so /debug/pprof/mutex and /debug/pprof/block on
+// the pprof listener stop coming back empty. Sampling one in every hundred
+// mutex contention events and an average of one blocking event per 1 ms
+// spent blocked bounds the sampling overhead. Called only together with the env-gated listener.
+func enableContentionProfiling() {
+	runtime.SetMutexProfileFraction(100)
+	runtime.SetBlockProfileRate(1_000_000)
 }
 
 // startPprofListener starts net/http/pprof on a DEDICATED mux bound to addr

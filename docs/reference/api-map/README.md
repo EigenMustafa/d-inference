@@ -1,5 +1,7 @@
 # Darkbloom system map
 
+> Last updated: 2026-09-08 · commit `a34e8994c`
+
 A generated map of Darkbloom's entry points: what authorizes each one, what state
 its reachable code touches, and whether that access reads or writes. The
 coordinator is the first service extracted; the provider and the two consoles are

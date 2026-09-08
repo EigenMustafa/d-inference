@@ -220,6 +220,7 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
     public func streamChatCompletion(
         request: OpenAIChatCompletionRequest
     ) async throws -> AsyncThrowingStream<MLXServerGenerationEvent, Error> {
+        let templateControls = self.templateControls.resolvingPromptDate()
         try checkFirstContentDeadline()
 
         // I1: prefer the atomic-`acquire` path. The legacy three-closure
@@ -452,14 +453,11 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
                         await bridge.cancel(requestId: visionRequestId)
                         throw error
                     }
-                    // Qwen3.6/DeepSeek-style templates pre-open a <think>
-                    // block at the prompt tail (output carries only the
-                    // close). Without a synthesized open, the downstream
-                    // streaming think parser buffers the whole block —
-                    // TTFT becomes the full thinking duration. Same probe
-                    // as the text path below.
+                    // Initialize the think parser from the rendered media
+                    // prompt: reasoning for an open block, content for a
+                    // pre-closed block (thinking-disabled media).
                     try checkFirstContentDeadline()
-                    let synthesizeThinkOpen = ReasoningPromptProbe.shouldSynthesizeThinkOpen(
+                    let reasoningPrefix = ReasoningPromptProbe.streamingPrefix(
                         reasoningParser: visionRequest.reasoningParser,
                         stream: visionRequest.stream,
                         promptTokens: visionPrepared.promptTokens,
@@ -472,7 +470,7 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
                         toolHandler: nil,
                         prepared: prepared,
                         releaseBox: releaseBox,
-                        synthesizeThinkOpen: synthesizeThinkOpen
+                        reasoningPrefix: reasoningPrefix
                     )
                 } catch let failure as PreContentDeadlineFailure {
                     await mediaGate.release(requestId: mediaReqId)
@@ -594,19 +592,16 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
             }
         }
 
-        // Qwen3.6/DeepSeek-style templates pre-open a <think> block at the
-        // prompt tail (the model's output carries only the close). Without a
-        // synthesized open, the downstream streaming think parser sits in its
-        // `undecided` state buffering the ENTIRE block — the consumer's first
-        // delta (TTFT) is delayed by the whole thinking duration. See
-        // `ReasoningPromptProbe`.
+        // The rendered prompt determines whether output starts in reasoning
+        // or content mode. Seed that state before any model output so neither
+        // thinking-enabled nor thinking-disabled answers buffer until finish.
         do {
             try checkFirstContentDeadline()
         } catch {
             await releaseBox.fire()
             throw error
         }
-        let synthesizeThinkOpen = ReasoningPromptProbe.shouldSynthesizeThinkOpen(
+        let reasoningPrefix = ReasoningPromptProbe.streamingPrefix(
             reasoningParser: request.reasoningParser,
             stream: request.stream,
             promptTokens: promptTokens,
@@ -746,7 +741,7 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
             toolHandler: toolHandler,
             prepared: prepared,
             releaseBox: releaseBox,
-            synthesizeThinkOpen: synthesizeThinkOpen
+            reasoningPrefix: reasoningPrefix
         )
     }
 
@@ -776,7 +771,7 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
         toolHandler: BatchedToolStreamHandler?,
         prepared: ToolChoicePromptPolicy.Prepared,
         releaseBox: OneShotRelease,
-        synthesizeThinkOpen: Bool = false
+        reasoningPrefix: String? = nil
     ) async throws -> AsyncThrowingStream<MLXServerGenerationEvent, Error> {
         do {
             try checkFirstContentDeadline()
@@ -791,7 +786,7 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
             toolHandler: toolHandler,
             prepared: prepared,
             releaseBox: releaseBox,
-            synthesizeThinkOpen: synthesizeThinkOpen)
+            reasoningPrefix: reasoningPrefix)
         do {
             try checkFirstContentDeadline()
             return stream
@@ -814,7 +809,7 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
         toolHandler: BatchedToolStreamHandler?,
         prepared: ToolChoicePromptPolicy.Prepared,
         releaseBox: OneShotRelease,
-        synthesizeThinkOpen: Bool = false
+        reasoningPrefix: String? = nil
     ) -> AsyncThrowingStream<MLXServerGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -831,16 +826,13 @@ public struct MultiModelBatchSchedulerEngine: MLXServerEngine, Sendable {
                 var failedTerminal: MultiModelBatchSchedulerEngineError?
                 startedAt = Date()
 
-                // Synthetic <think> open (see `ReasoningPromptProbe`): the
-                // rendered prompt already opened a think block, so hand the
-                // downstream streaming parser the marker it will never see
-                // in model output. The parser consumes it as a pure state
-                // transition — no SSE frame reaches the consumer — and then
-                // streams reasoning deltas incrementally instead of
-                // buffering until `</think>`. Deliberately BYPASSES the
-                // tool handler: the marker is not model output.
-                if synthesizeThinkOpen {
-                    continuation.yield(.content(ReasoningPromptProbe.thinkOpen))
+                // Restore the prompt-side reasoning state in the downstream
+                // parser before model output. This prefix emits no SSE frame
+                // and bypasses the tool handler because it is not generated
+                // output. Real content and usage continue through the normal
+                // event handling below.
+                if let reasoningPrefix {
+                    continuation.yield(.content(reasoningPrefix))
                 }
 
                 for await event in upstream {

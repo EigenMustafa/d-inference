@@ -6,6 +6,7 @@
         ui-install ui-build ui-lint ui-test ui \
         e2e-integration e2e-benchmark e2e \
         graph graph-frontend graph-check graph-test \
+        docs-check docs-stamp \
         test build all clean
 
 help:
@@ -72,7 +73,7 @@ provider-test: ## Build and run Swift provider tests with source-matched metalli
 	    done; \
 	    [ "$$found" -eq 1 ] || { echo "provider test runner bundle not found in $$bin_path" >&2; exit 1; }; \
 	    trap - EXIT HUP INT TERM
-	cd provider-swift && swift test --skip-build
+	cd provider-swift && ../scripts/run-provider-tests.sh
 
 provider: provider-build provider-test ## Build + test provider
 
@@ -143,9 +144,17 @@ graph-check: ## Fail if source has outgrown the curated system-map overlay
 graph-test: ## Test the map generator and drive the generated page in a DOM
 	$(MAKE) -C tools/systemmap test
 
+# ---- Docs -------------------------------------------------------------------
+
+docs-check: ## Lint docs/: freshness stamps, relative links, cited code paths, orphans
+	./scripts/docs-check.sh
+
+docs-stamp: ## Refresh the freshness stamp on changed docs (FILES=... to target specific files)
+	./scripts/docs-stamp.sh $(FILES)
+
 # ---- Aggregates ------------------------------------------------------------
 
-test: coordinator-test prompt-sidecar-test provider-test ui-test benchmark-wrapper-test graph-test ## Run all unit tests
+test: coordinator-test prompt-sidecar-test provider-test ui-test benchmark-wrapper-test graph-test docs-check ## Run all unit tests + docs lint
 
 build: coordinator-build prompt-sidecar-build provider-build ui-build ## Build all components
 

@@ -22,9 +22,28 @@ func TestIsSQLStatements(t *testing.T) {
 		`DROP TABLE IF EXISTS legacy_models`,
 		`TRUNCATE TABLE usage`,
 		`SELECT (SELECT 1)`,
+		`SET LOCAL work_mem = '1GB'`,
+		`SET LOCAL hash_mem_multiplier = 1.0`,
+		`SET LOCAL plan_cache_mode = force_custom_plan`,
+		`SET SESSION statement_timeout TO '5s'`,
 	} {
 		if !IsSQL(s) {
 			t.Errorf("IsSQL(%q) = false, want true", s)
+		}
+	}
+}
+
+// TestSessionConfigurationNamesNoTable pins the other half of accepting SET as a
+// statement. It counts toward the body's readable statements, so it must not also
+// contribute an edge: a setting is not a table, and reading one as `FROM`'s
+// argument would draw state the statement never touches.
+func TestSessionConfigurationNamesNoTable(t *testing.T) {
+	for _, s := range []string{
+		`SET LOCAL work_mem = '1GB'`,
+		`SET LOCAL plan_cache_mode = force_custom_plan`,
+	} {
+		if got := Tables(s); len(got) != 0 {
+			t.Errorf("Tables(%q) = %v, want none", s, got)
 		}
 	}
 }
@@ -41,6 +60,17 @@ func TestIsSQLProse(t *testing.T) {
 		"provider disconnected before content, retrying elsewhere",
 		"insert",
 		"SELECT",
+		// `SET` is a statement only in its scoped assignment form. Prose that opens
+		// with the word is not, or every log line about idling a provider would count
+		// as a readable statement and mask a body that hides one.
+		"set the provider idle and requeue its pending work",
+		"set to the fleet median when the engine reports no budget",
+		// Nor is the tail of a spliced update, which is why the scope word is
+		// required: counting `SET name = $1` as a statement balances the readable
+		// count for `"-- rows queued for\nUPDATE " + table + " SET name = $1"`, whose
+		// table is exactly the kind the count check exists to notice.
+		`SET name = $1`,
+		`SET tokens = tokens + 1, updated_at = now()`,
 	} {
 		if IsSQL(s) {
 			t.Errorf("IsSQL(%q) = true, want false", s)

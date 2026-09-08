@@ -59,6 +59,25 @@ var sqlForms = []struct {
 	{regexp.MustCompile(`^drop\s+(?:table|index)\s`), nil},
 	{regexp.MustCompile(`^truncate\s`), regexp.MustCompile(`^truncate\s+(?:table\s+)?` + reIdent)},
 	{regexp.MustCompile(`^do\s+\$\$`), nil},
+	// Session configuration. `SET LOCAL work_mem = '1GB'` is a whole statement
+	// that names no table, and the analytics reads raise work_mem, pin
+	// hash_mem_multiplier and force a custom plan that way
+	// (coordinator/store/postgres_analytics.go). Without this form the extractor
+	// read those as "not a statement", so a body whose only statements are SET
+	// looked like one that assembled its SQL out of sight — the count check
+	// reported `withAnalyticsTx` while nothing was actually hidden. The remedy on
+	// offer there is to declare the function's tables, which would have been a
+	// human vouching for the empty set forever.
+	//
+	// `LOCAL`/`SESSION` and the assignment are both required. `^set\s` alone matches
+	// English ("set the provider idle"), and a prose match invents a table named
+	// after the next word. Dropping the scope word is not enough either: the tail of
+	// a spliced update is `SET name = $1`, which would then count as a statement of
+	// its own and balance the count for a body whose table really is spliced in at
+	// run time — the one thing that check exists to catch. Every SET the coordinator
+	// issues is scoped to the transaction, so requiring the word costs nothing, and
+	// `Tables` finds no table in either shape either way.
+	{regexp.MustCompile(`^set\s`), regexp.MustCompile(`^set\s+(?:local|session)\s+[a-z_][a-z0-9_.$]*\s*(?:=|to)\s`)},
 }
 
 // IsSQL reports whether a string literal is a SQL statement.

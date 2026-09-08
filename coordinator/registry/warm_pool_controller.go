@@ -688,7 +688,7 @@ func (r *Registry) warmPoolCandidateReasonLocked(p *Provider, model string, now 
 	if p.Status == StatusOffline || p.Status == StatusUntrusted || p.PrivateOnly {
 		return warmPoolCandidate{}, warmColdOfflineUntrust
 	}
-	if r.providerHasPendingLoad(p.ID) || r.dispatchLoadCooldownActiveLocked(p.ID, model, now) {
+	if r.providerHasPendingLoad(p.ID) || r.gateOf(p).dispatchLoadCooled(model, now) {
 		return warmPoolCandidate{}, warmColdPendingLoad
 	}
 	if p.pendingCount() != 0 || warmPoolBackendSlotBusyLocked(p) {
@@ -728,7 +728,7 @@ func (r *Registry) warmPoolCandidateReasonLocked(p *Provider, model string, now 
 	// pick a warm-pool target the provider already reports it cannot fit, or the
 	// warm pool issues a load_model the provider rejects (failed warm + pending-load
 	// cooldown) instead of choosing a truly loadable node (#390).
-	if admit, reported := reportedFreeForLoadAdmits(r.catalogSizeGBLocked(model), backendFreeForLoadGB(p.BackendCapacity), p.Version, model); reported && !admit {
+	if admit, reported := reportedFreeForLoadAdmits(r.catalogSizeGBLocked(model), backendFreeForLoadGB(p.BackendCapacity)); reported && !admit {
 		return warmPoolCandidate{}, warmColdNoFreeForLoad
 	}
 	freeGB := totalMemoryGB - gpuActiveGB

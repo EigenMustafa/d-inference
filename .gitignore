@@ -98,3 +98,6 @@ docs/RUNBOOK.md
 docs/reference/api-map/system-map.html
 docs/reference/api-map/inventory.json
 docs/reference/api-map/report.md
+
+# Local performance binaries and raw diagnostic captures
+/artifacts/

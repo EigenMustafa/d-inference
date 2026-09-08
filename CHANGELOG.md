@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — provider SSD cache disk policy
+
+- Size the shared SSD cache at half of currently available disk space without a fixed 100 GiB ceiling. Keep a fixed 20 GiB low-disk write reserve instead of reserving 5% of the whole disk, so large disks with ample free space can cache. Preserve encryption, eviction, daily write limits and ENOSPC handling.
+
 ## Unreleased — stats request-flow refresh
 
 - Restore Stats refreshes on large usage windows by aggregating request origins before looking up provider locations. Preserve weighted coordinates, request/token counts, and the top-50 flow limit while avoiding large temporary sorts.

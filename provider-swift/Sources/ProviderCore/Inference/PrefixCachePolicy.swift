@@ -84,15 +84,14 @@ enum PrefixCachePolicy {
     /// retired `BatchScheduler+PrefixCacheSizing` resolver).
     static let diskBudgetEnvironmentFlag = "DARKBLOOM_PREFIX_CACHE_DISK_GB"
 
-    /// Box-wide SSD ceiling across all models, clamped to half the volume's
-    /// currently available space.
-    static let defaultSSDDiskBudgetBytes = 100 * 1_073_741_824
+    /// Conservative fallback only when available disk space cannot be measured.
+    static let fallbackSSDDiskBudgetBytes = 20 * 1_073_741_824
 
     /// Resolved box-wide SSD disk budget (bytes). A valid positive env
-    /// override wins verbatim; otherwise `min(100 GiB, free/2)`,
+    /// override wins verbatim; otherwise `free/2`, without a fixed ceiling,
     /// re-evaluated per enforcement so the
     /// ceiling shrinks as the volume fills. Unknown free space ⇒ the
-    /// fixed default.
+    /// conservative fallback. The separate low-disk write guard remains active.
     static func ssdDiskBudgetBytes(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         freeBytes: Int?
@@ -101,8 +100,8 @@ enum PrefixCachePolicy {
         if let gb = envGB, gb > 0, gb.isFinite, gb < gbToBytesCeiling {
             return Int(gb * 1_073_741_824)
         }
-        guard let free = freeBytes else { return defaultSSDDiskBudgetBytes }
-        return max(1, min(defaultSSDDiskBudgetBytes, free / 2))
+        guard let free = freeBytes else { return fallbackSSDDiskBudgetBytes }
+        return max(1, free / 2)
     }
 
     /// Best-effort free capacity (bytes) of the volume containing `url`

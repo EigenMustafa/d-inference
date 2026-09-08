@@ -670,7 +670,7 @@ struct SSDPrefixCacheModeTests {
             == PrefixCacheReadyResult.maxStageMs)
     }
 
-    @Test("box-wide disk budget: env override wins; default = min(100 GiB, free/2)")
+    @Test("box-wide disk budget: env override wins; default follows half of free space")
     func diskBudgetResolver() {
         let gib = 1_073_741_824
         #expect(
@@ -681,22 +681,24 @@ struct SSDPrefixCacheModeTests {
             PrefixCachePolicy.ssdDiskBudgetBytes(
                 environment: ["DARKBLOOM_PREFIX_CACHE_DISK_GB": "150"], freeBytes: 10 * gib)
                 == 150 * gib)
-        // The automatic ceiling applies when at least 200 GiB is available.
+        // Large volumes are no longer limited by a fixed 100 GiB ceiling.
         #expect(
             PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: 800 * gib)
-                == 100 * gib)
+                == 400 * gib)
         #expect(
             PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: 200 * gib)
                 == 100 * gib)
-        // Below that, the automatic budget follows currently available space.
+        // The automatic budget follows currently available space.
         #expect(
             PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: 100 * gib)
                 == 50 * gib)
         #expect(
             PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: 10 * gib)
                 == 5 * gib)
-        // Preserve the fixed fallback when free space is unknown.
-        #expect(PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: nil) == 100 * gib)
+        // Unknown capacity keeps a conservative bounded fallback.
+        #expect(PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: nil) == 20 * gib)
+        #expect(PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: 0) == 1)
+        #expect(PrefixCachePolicy.ssdDiskBudgetBytes(environment: [:], freeBytes: Int.max) == Int.max / 2)
         // Malformed env degrades to the default (never crashes, never 0).
         #expect(
             PrefixCachePolicy.ssdDiskBudgetBytes(
@@ -728,6 +730,10 @@ struct SSDPrefixCacheModeTests {
         #expect(SSDPrefixCachePolicy.maxStageBytes(environment: [:]) == 1024 * 1_048_576)
         #expect(SSDPrefixCachePolicy.maxStageMillis(environment: [:]) == 1000)
         #expect(SSDPrefixCachePolicy.lowDiskFloorBytes(volumeCapacityBytes: 0)
+            == 20 * 1_073_741_824)
+        #expect(SSDPrefixCachePolicy.lowDiskFloorBytes(volumeCapacityBytes: 1_995_165_736_960)
+            == 20 * 1_073_741_824)
+        #expect(SSDPrefixCachePolicy.lowDiskFloorBytes(volumeCapacityBytes: Int.max)
             == 20 * 1_073_741_824)
     }
 }
@@ -1624,6 +1630,28 @@ struct SSDReadyWriteBarrierTests {
             stats: SSDPrefixCacheStatsBox(),
             onBlockSettled: onBlockSettled,
             sweepExpired: {})
+    }
+
+    @Test("a large disk with 95 GB free can donate below five percent free")
+    func largeVolumeDonation() async throws {
+        let dir = tempDir("large-volume-donation")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let writes = Counter()
+        let durable = Counter()
+        let outcome = OutcomeBox()
+        let writer = pipeline(
+            dir: dir,
+            volumeSpace: { (free: 94_941_983_360, capacity: 1_995_165_736_960) },
+            writeBlock: { _, _ in writes.increment(); return 1 })
+        #expect(writer.submit(.init(
+            blocks: [block(1)], totalBytes: 1,
+            onDurable: { durable.increment(); return true },
+            onOutcome: outcome.set)))
+        await writer.waitUntilDrained()
+        writer.close()
+        #expect(writes.count == 1)
+        #expect(durable.count == 1)
+        #expect(outcome.outcome == .donated)
     }
 
     @Test("low disk, generic write error, ENOSPC, and shutdown never cross durable barrier")

@@ -309,7 +309,7 @@ final class SSDWriteBehind: @unchecked Sendable {
             settleAll(job, dropped: job.blocks.count)
             return
         }
-        // Low-disk guard: stop writing under max(20 GiB, 5% capacity) free.
+        // Low-disk guard: stop writing under the fixed free-space reserve.
         if let space = config.volumeSpace() {
             let floor = SSDPrefixCachePolicy.lowDiskFloorBytes(volumeCapacityBytes: space.capacity)
             if space.free < floor {

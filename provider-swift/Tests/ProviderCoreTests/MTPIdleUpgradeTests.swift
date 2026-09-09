@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import ProviderCore
 
-private actor UpgradeBarrier {
+actor UpgradeBarrier {
     var entered = false
     var released = false
     var waiters: [CheckedContinuation<Void, Never>] = []

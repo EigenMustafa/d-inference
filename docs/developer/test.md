@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-08 · commit `501320342`
+> Last updated: 2026-09-08 · commit `0c162cdae`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -121,7 +121,7 @@ tests truncate tables and create/drop isolated databases; never point
 cd coordinator
 # DATABASE_URL must name a throwaway local database.
 go test -p 1 ./store ./cmd/coordinator -run 'Test(EarningsSummary|RecordProviderEarningMaintains|ProviderRestore|PostgresRestore|Maintenance)' -count=1
-go test -race ./api ./registry -run 'Test(ProviderRestore|RestoreProviderState|AttachCachedMDAProof|StageDurableMDAChain)' -count=1
+go test -race ./api ./registry -run 'Test(ProviderRestore|ProviderPendingRestore|RestoreProviderState|AttachCachedMDAProof|StageDurableMDAChain)' -count=1
 ```
 
 These check captured-history recovery across old-style live writes and canceled
@@ -134,6 +134,14 @@ identity lookup through CachedStore,
 index applicability, MDA trust caps, and a migration-only subprocess that exits
 without HTTP startup or admin-key seeding. They do not measure production startup
 latency or validate an overlapping coordinator handoff.
+
+Startup recovery regressions also cover old settlement commits around the pinned
+snapshot/attempt-marker boundary, catalog-verified index definitions and isolated
+planner applicability, transient provider/reputation retries, a shared deadline,
+1013 registration teardown before duplicate eviction, and routing/capacity/load
+exclusion while a verified identity is restoring. Tests use disposable stores and
+localhost WebSockets (`coordinator/api/provider_restore_retry_test.go`,
+`coordinator/registry/provider_restore_routing_test.go`); they do not reconnect production providers.
 
 ### 3. Prompt-contract sidecar (Rust)
 
@@ -148,6 +156,7 @@ CI additionally builds the static Linux binary through the Dockerfile stage
 checks `file` reports `statically linked|static-pie linked`, and replays the
 production prompt vectors against it with
 `scripts/verify-prompt-sidecar-linux.sh <binary>`.
+
 
 ### 4. Provider (Swift) — unit tests with a source-matched metallib
 

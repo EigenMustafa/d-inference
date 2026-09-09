@@ -1,6 +1,6 @@
 # Deploy the coordinator (production)
 
-> Last updated: 2026-09-08 · commit `501320342`
+> Last updated: 2026-09-08 · commit `0c162cdae`
 
 Runbook for swapping the production coordinator container on the GCE VM
 `darkbloom-coordinator` to a Cloud-Build image of a reviewed `master` commit,
@@ -164,13 +164,18 @@ swap.
 
 The earnings-summary migration captures missing-key history once, commits a
 resumable plan, then adds each pending delta and removes it in a short transaction.
+Its repeatable-read snapshot is pinned before the attempted-plan marker commits,
+so settlement during marker creation cannot hide missing historical totals.
+Initial planning uses one additional short-lived database connection for that
+marker, even with a single-connection pool; budget for it before preparation.
+A failed or uncertain marker write aborts preparation.
 Existing `CreditProviderAccount` and `SettleProviderFloorDraw` writers can continue:
 their atomic earning/summary updates coexist with the captured deltas without a
 new writer-lock protocol. Quiesce any old record-only/import writer that lacks
 atomic summary updates. Already inconsistent counters at plan time need explicit
 reconciliation; this migration preserves existing totals rather than guessing.
-The final marker makes subsequent startup avoid the historical scan. If the
-initial planning transaction fails, an attempted-plan marker makes subsequent
+The final marker makes subsequent startup avoid the historical scan. If the attempt marker committed but the
+initial planning transaction fails, that marker makes subsequent
 startup fail closed rather than silently replan against newly created partial
 counters. Follow the recovery procedure below; a committed plan's per-key
 progress instead resumes automatically. New

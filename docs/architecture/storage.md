@@ -1,6 +1,6 @@
 # Storage
 
-> Last updated: 2026-09-08 · commit `501320342`
+> Last updated: 2026-09-08 · commit `0c162cdae`
 
 What the coordinator persists, through which interface, in which backend, and
 how the schema reaches a fresh database; then what a provider keeps on its own
@@ -106,19 +106,25 @@ behind a long query's lock). `coordinator/deploy/start.sh` does not touch the
 database; it only prepares the persistent disk and MicroMDM before `exec
 coordinator`.
 
-The earnings-summary backfill captures missing account and provider keys in a
-single `READ COMMITTED` statement snapshot, and commits their historical deltas
-to `earnings_summary_backfill_pending` alongside a plan marker. Existing counters
-at that snapshot are preserved. A short transaction adds one pending key to its
-live counter and removes the pending item atomically; the final
-`backfill_earnings_summary_v1` marker is recorded only after the queue is empty.
+The earnings-summary backfill pins a `REPEATABLE READ` snapshot before publishing
+its attempted-plan marker on a separate, bounded database connection. Missing
+account and provider keys, and their historical earnings, are read from that
+same pinned snapshot. An old writer committing before or after the attempt
+marker remains outside the captured history if it committed after the snapshot.
+The plan commits its historical deltas to `earnings_summary_backfill_pending`
+alongside the ready-plan marker. Existing counters at the pinned snapshot are
+preserved. A short transaction adds one pending key to its live counter and
+removes the pending item atomically; the final `backfill_earnings_summary_v1`
+marker is recorded only after the queue is empty.
+
 Retries resume committed progress without rescanning history or double-adding
 applied keys. Migration runners serialize on a session advisory lock using one
-leased connection; serving writers do not participate in that lock. An attempted-plan
-marker is committed before initial planning. If that snapshot aborts, a retry
-refuses to replan because live writers may meanwhile have created partial
-counters. The coordinator remains unready until explicit reconciliation; an
-already committed plan continues automatically from its pending keys.
+leased connection; serving writers do not participate in that lock. Only initial
+planning opens the extra marker connection; it does not wait for a second pool
+slot. A failed or uncertain marker write aborts planning. If the attempt marker
+committed but the ready plan did not, retry refuses to replan against potentially
+partial counters. The coordinator remains unready until explicit reconciliation;
+an already committed plan continues automatically from its pending keys.
 
 The existing `CreditProviderAccount` and `SettleProviderFloorDraw` SQL statements
 insert earnings and update both summaries atomically. A live writer that creates
@@ -154,11 +160,16 @@ writes are skipped. Completed records publish together with their reputation in
 one Postgres transaction or MemoryStore lock (`UpsertProviderWithReputation`,
 `coordinator/store/provider_record_write.go`), so an older zero snapshot cannot
 overwrite the completed state and no completed identity appears without its
-reputation. A history or unexpected reputation read error leaves the identity
-unpublished; a later reconnect retries against preserved history. Missing legacy
-reputation is allowed. There is no timer that marks a failed lookup complete. `NewServer` does
-not scan historical providers. The existing `RestoreProviderState` trust cap
-and independent newest-nonempty-MDA-chain re-verification remain in force.
+reputation. Registration retries history/reputation reads up to three times,
+within one five-second deadline shared with `RestoreProviderStateContext`.
+Verified identities still awaiting restoration fail `state_restoring` in routing,
+capacity and model-loading gates; owner self-route cannot bypass it. Exhaustion
+ends the new registration with WebSocket close code 1013 before account lookup,
+MDM scheduling or duplicate-session eviction. Normal reconnect can retry against
+preserved history. Missing legacy reputation is allowed; a failed read never
+marks restoration complete. `NewServer` does not scan historical providers.
+The existing `RestoreProviderState` trust cap and independent newest-nonempty-MDA
+chain re-verification remain in force.
 Store errors are logged and do not grant hardware trust. Reputation is still
 loaded by the selected historical record ID. `ListProviderRecords` remains an
 explicit administrative store operation and now returns scan/iteration errors

@@ -71,8 +71,8 @@ private struct ProviderUpgradeFixture {
         let telemetry = UpgradePostureSink()
         let factory = UpgradeScriptedFactory()
         await loop.setEngineV2RuntimeForTesting(runtime)
-        await loop.setEngineV2SlotHooksForTesting(.init(physicalMemoryBytes: 64 << 30,
-            emitTelemetry: { telemetry.record($0) },
+        await loop.setEngineV2SlotHooksForTesting(.init(
+            emitTelemetry: { telemetry.record($0) }, physicalMemoryBytes: 64 << 30,
             assistantLoader: MTPFloorAssistantLoader(),
             makeEngine: { _, bytes in try factory.make(bytes) }))
         let engine = UpgradeScriptedEngine(bytes: 1 << 30, shutdownBarrier: shutdownBarrier)

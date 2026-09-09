@@ -8,6 +8,11 @@
 - Recover provider history on reconnect through indexed identity lookups instead of scanning every historical session before serving. Select the newest prior session and preserve live attestation requirements.
 - Capture missing earnings-summary history once and resume per-key additions safely alongside existing live settlement; keep base-reward money separate from inference counts/tokens. Exclude incomplete and live reconnect records from history recovery, including late async writes. Publish completed provider records and reputation atomically, preserving legacy missing-reputation behavior while refusing failed reads. Maintain summaries on record-only inserts as well as account settlement. Add startup phase timings and a database-only migration command for approved preparation before cutover.
 
+## Unreleased — partial network geography
+
+- Keep network stats loading when request-location or route analytics time out. Refresh geography independently, expose unavailable sections explicitly, and show a map notice while the rest of the overview remains usable. Preserve valid empty maps and restore geography automatically after recovery.
+
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

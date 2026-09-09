@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-08 · commit `d984a9fd9`
+> Last updated: 2026-09-08 · commit `970384ae7`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -149,6 +149,11 @@ Without it kernel-backed tests fail or silently exercise a different kernel
 set than production. To run a subset: `cd provider-swift && swift test
 --skip-build --filter <Suite>` after `make provider-test` has staged the
 metallib once.
+
+For a custom SwiftPM `--scratch-path`, stage the authoritative `mlx.metallib`
+in the active `debug` or `release` directory containing the `.xctest` bundle.
+`LiveInferenceFixtures.findSourceMetallib` uses that same-configuration source
+before replacing the runner copy; a runner-local file alone is insufficient.
 
 Tests that change process-wide MLX settings must use Swift Testing's
 `#expect(processExitsWith: .success)` child-process boundary. Restoring an

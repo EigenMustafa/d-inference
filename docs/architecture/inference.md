@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `12032996e`
+> Last updated: 2026-09-08 · commit `efb5517fc`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -141,6 +141,20 @@ The shared `MTPMode.enablesMTP` policy receives the exact model ID from both
 `ProviderLoop.specDecPreparation` and `StandaloneServer.specDecPreparation`.
 Startup catalog prewarm includes the automatic QAT target; ordinary slot loads
 remain local-only and optional artifact prefetch remains asynchronous.
+A network provider whose first QAT slot starts target-only monitors assistant
+readiness asynchronously. It stages a verified assistant and an unregistered
+replacement over the retained target, with a separate pending-memory lease and
+only the minimum serviceable KV grant. Existing requests continue on the old
+engine. Publication waits for both network requests and local reservations to
+finish, briefly queues new admissions, then swaps engines and releases the old
+idle pool before regrowing grants. Failure, cancellation, a replaced target or
+insufficient staging memory leaves the serving engine intact; no model is evicted
+for this optional upgrade. The readiness loop polls with 10–15 second jitter,
+makes up to 120 idle checks spaced 500 ms apart for an idle cutover, and retries unsuccessful staging
+after five minutes. Failed artifact fetches independently back off exponentially
+with jitter, capped at five minutes
+(`provider-swift/Sources/ProviderCore/ProviderLoop+MTPUpgrade.swift`,
+`provider-swift/Sources/ProviderCore/Inference/MTPIdleUpgrade.swift`).
 Standalone serving never downloads an assistant. Missing, incompatible, or
 memory-ineligible assistants preserve target-only serving; explicit `off` and
 `DARKBLOOM_CBV2_MTP=0` disable MTP

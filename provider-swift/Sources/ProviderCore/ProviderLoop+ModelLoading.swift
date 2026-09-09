@@ -197,6 +197,7 @@ extension ProviderLoop {
     internal func ensureModelLoaded(
         modelId: String, allowEviction: Bool = true
     ) async throws {
+        await waitForMTPUpgrade(modelId)
         try ModelRuntimeRequirements.requireEligible(
             modelID: modelId, available: loopConfig.runtimeCapabilities)
         if isShuttingDown {
@@ -825,6 +826,7 @@ extension ProviderLoop {
     }
 
     internal func unloadModel(_ modelId: String) async {
+        await waitForMTPUpgrade(modelId)
         // Bind ONLY the bridge, never the whole slot: the slot value is the
         // last owner of the container AND the opaque MTP drafter handle, and
         // both must be released at `removeValue` below — BEFORE the cache

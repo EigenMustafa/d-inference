@@ -564,7 +564,8 @@ extension ProviderLoop {
         kvBytesCapacity: Int,
         specDecPreparation: SpecDecPreparation,
         preparedModel: EngineV2PreparedModel?,
-        cacheEligibleWeightHash: String? = nil
+        cacheEligibleWeightHash: String? = nil,
+        registerInRuntime: Bool = true
     ) async throws -> ProviderEngineBundle {
         let maxConcurrent = engineV2MaxConcurrent(forModel: modelId)
 
@@ -647,7 +648,9 @@ extension ProviderLoop {
         // (Prefix-cache construction — RAM carve AND the SSD offload tier —
         // budget bookkeeping, stats loggers, and the cache-state log line
         // all live inside the shared slot factory.)
-        await engineV2Runtime.register(modelId: modelId, bridge: bridge)
+        if registerInRuntime {
+            await engineV2Runtime.register(modelId: modelId, bridge: bridge)
+        }
         if isVLM {
             logger.info(
                 "engine_v2: serving \(modelId) via ContinuousBatchingV2 "

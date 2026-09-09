@@ -575,6 +575,26 @@ struct SpecDecArtifactFunnelTests {
         #expect(await catalog.calls == 0)
     }
 
+    @Test("failed asynchronous fetches back off instead of retrying on every readiness poll")
+    func failedPrefetchPollingBacksOff() async throws {
+        let catalog = FunnelCatalog(nil)
+        let artifactFunnel = funnel(catalog: catalog, root: FileManager.default.temporaryDirectory)
+        let request = SpecDecArtifactFunnel.Request(
+            modelId: "gemma-4-26b-qat-4bit", modelType: "gemma4", enabled: true,
+            localPath: nil, allowDownload: true, environment: [:])
+        _ = await artifactFunnel.prepare(request)
+        for _ in 0..<100 {
+            if await catalog.calls == 1, await artifactFunnel.prefetchInFlightForTesting == 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await catalog.calls == 1)
+        #expect(await artifactFunnel.prefetchInFlightForTesting == 0)
+        for _ in 0..<20 { _ = await artifactFunnel.prepare(request) }
+        #expect(await catalog.calls == 1)
+        await artifactFunnel.shutdown()
+        #expect(await artifactFunnel.prefetchInFlightForTesting == 0)
+    }
+
     @Test("missing and malformed metadata return stable fail-open reasons")
     func metadataReasons() async {
         let missingCatalog = FunnelCatalog(funnelModel())

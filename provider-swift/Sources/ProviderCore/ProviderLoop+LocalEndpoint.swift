@@ -118,6 +118,7 @@ extension ProviderLoop {
                 throw MultiModelBatchSchedulerEngineError.queueFull("local capacity unavailable for \(modelId)")
             }
         }
+        await waitForMTPUpgrade(modelId)
         guard let slot = modelSlots[modelId] else {
             throw MultiModelBatchSchedulerEngineError.modelNotLoaded(modelId)
         }

@@ -404,7 +404,13 @@ func (s *Server) providerReadLoop(ctx context.Context, conn *websocket.Conn, pro
 			}
 			provider = s.registry.Register(providerID, conn, regMsg)
 			s.attachProviderLocation(providerID, provider, r)
-			s.verifyProviderAttestation(providerID, provider, regMsg)
+			if err := s.verifyProviderAttestation(loopCtx, providerID, provider, regMsg); err != nil {
+				// No duplicate eviction or account/MDM continuation after failed
+				// recovery. Pending state remains unroutable through teardown.
+				s.logger.Warn("provider registration recovery failed", "provider_id", providerID, "error", err)
+				_ = conn.Close(websocket.StatusTryAgainLater, "provider state temporarily unavailable")
+				return
+			}
 
 			// Record registration outcome metrics + telemetry.
 			if s.metrics != nil {
@@ -3043,7 +3049,7 @@ func (s *Server) handleInferenceErrorOwned(providerID string, provider *registry
 // if one was included in the registration message. If the attestation is valid,
 // the provider is marked as attested. If missing or invalid, the provider is
 // accepted in Open Mode only when no binary hash policy is configured.
-func (s *Server) verifyProviderAttestation(providerID string, provider *registry.Provider, regMsg *protocol.RegisterMessage) {
+func (s *Server) verifyProviderAttestation(ctx context.Context, providerID string, provider *registry.Provider, regMsg *protocol.RegisterMessage) error {
 	policyConfigured, knownBinaryHashes := s.binaryHashPolicySnapshot()
 	if len(regMsg.Attestation) == 0 {
 		if policyConfigured {
@@ -3055,12 +3061,12 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 				Error: "attestation missing",
 			})
 			s.registry.MarkUntrusted(providerID)
-			return
+			return nil
 		}
 		s.logger.Info("provider registered without attestation (Open Mode)",
 			"provider_id", providerID,
 		)
-		return
+		return nil
 	}
 
 	result, err := attestation.VerifyJSON(regMsg.Attestation)
@@ -3076,7 +3082,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 			})
 			s.registry.MarkUntrusted(providerID)
 		}
-		return
+		return nil
 	}
 
 	provider.SetAttestationResult(&result)
@@ -3089,7 +3095,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 		if policyConfigured {
 			s.registry.MarkUntrusted(providerID)
 		}
-		return
+		return nil
 	}
 
 	enforceReconnectFreshness := regMsg.Version != "" &&
@@ -3102,7 +3108,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 		s.registry.MarkUntrusted(providerID)
 		s.logger.Warn("provider registration attestation replay rejected",
 			"provider_id", providerID)
-		return
+		return nil
 	}
 
 	if !enforceReconnectFreshness {
@@ -3131,7 +3137,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 			if policyConfigured {
 				s.registry.MarkUntrusted(providerID)
 			}
-			return
+			return nil
 		}
 		if result.EncryptionPublicKey != regMsg.PublicKey {
 			s.logger.Warn("attestation encryption key does not match register public key",
@@ -3145,7 +3151,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 			if policyConfigured {
 				s.registry.MarkUntrusted(providerID)
 			}
-			return
+			return nil
 		}
 	}
 
@@ -3165,7 +3171,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 			result.Error = "binary hash missing"
 			provider.SetAttestationResult(&result)
 			s.registry.MarkUntrusted(providerID)
-			return
+			return nil
 		}
 		binaryHash, err := normalizeSHA256Hex(result.BinaryHash, "binary_hash")
 		if err != nil || !knownBinaryHashes[binaryHash] {
@@ -3177,7 +3183,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 			result.Error = "binary hash not recognized"
 			provider.SetAttestationResult(&result)
 			s.registry.MarkUntrusted(providerID)
-			return
+			return nil
 		}
 		s.logger.Info("provider binary hash verified",
 			"provider_id", providerID,
@@ -3213,7 +3219,9 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 	// Resolve only this freshly verified identity, rather than loading all historical
 	// sessions before startup. Exclude every live session and keep incomplete
 	// registrations' identities unpublished across asynchronous persistence.
-	s.restorePersistedProviderState(provider, result.SerialNumber, result.PublicKey)
+	if err := s.restorePersistedProviderState(ctx, provider, result.SerialNumber, result.PublicKey); err != nil {
+		return err
+	}
 
 	// Independently recover the newest non-empty durable MDA chain. A newer
 	// empty record must not shadow a chain earned by an earlier session. The
@@ -3240,6 +3248,7 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 			"provider_id", providerID,
 		)
 	}
+	return nil
 }
 
 // mdmVerifyOutcome classifies one scheduler-owned MDM verification attempt.

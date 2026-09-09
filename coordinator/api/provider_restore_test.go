@@ -45,7 +45,7 @@ func TestProviderRestoreLoadsAfterStartupAndNeverResurrectsHardware(t *testing.T
 	}
 	p := reg.Register("current", nil, &protocol.RegisterMessage{})
 	p.SetAttested(true, registry.TrustSelfSigned)
-	srv.restorePersistedProviderState(p, "serial", "key")
+	srv.restorePersistedProviderState(context.Background(), p, "serial", "key")
 	p.Mu().Lock()
 	defer p.Mu().Unlock()
 	if p.TrustLevel != registry.TrustSelfSigned || p.MDAVerified || len(p.MDACertChain) != 0 {
@@ -63,7 +63,7 @@ func TestProviderRestoreNotReachedWithoutValidAttestation(t *testing.T) {
 	srv := &Server{registry: reg, store: st, logger: logger}
 	for _, evidence := range []json.RawMessage{nil, json.RawMessage(`{"bad":`)} {
 		p := reg.Register(string(evidence)+"p", nil, &protocol.RegisterMessage{})
-		srv.verifyProviderAttestation(p.ID, p, &protocol.RegisterMessage{Attestation: evidence})
+		srv.verifyProviderAttestation(context.Background(), p.ID, p, &protocol.RegisterMessage{Attestation: evidence})
 	}
 	if st.lookups != 0 {
 		t.Fatal("looked up durable state before live attestation verification")
@@ -109,7 +109,10 @@ func TestProviderConcurrentReconnectsExcludeBothPartialRows(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, p := range []*registry.Provider{one, two} {
 		wg.Add(1)
-		go func(p *registry.Provider) { defer wg.Done(); srv.restorePersistedProviderState(p, "serial", "se") }(p)
+		go func(p *registry.Provider) {
+			defer wg.Done()
+			srv.restorePersistedProviderState(context.Background(), p, "serial", "se")
+		}(p)
 	}
 	for i := 0; i < 2; i++ {
 		select {
@@ -157,7 +160,7 @@ func TestProviderRestoreRechecksSessionsRegisteredDuringLookup(t *testing.T) {
 		}
 	}}
 	srv := &Server{store: st, registry: reg, logger: logger}
-	srv.restorePersistedProviderState(p, "serial", "se")
+	srv.restorePersistedProviderState(context.Background(), p, "serial", "se")
 	if st.calls != 2 || p.Stats.TokensGenerated != 700 {
 		t.Fatalf("late active row accepted: calls=%d tokens=%d", st.calls, p.Stats.TokensGenerated)
 	}

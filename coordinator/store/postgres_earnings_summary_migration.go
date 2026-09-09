@@ -44,7 +44,9 @@ func (s *PostgresStore) applyEarningsSummaryMigration(ctx context.Context) (bool
 		return false, nil
 	}
 	// Serialize migration runners on one leased connection (also works with a
-	// one-connection pool). Serving writers neither use nor need this advisory
+	// one-connection pool). Initial planning uses one additional bounded direct
+	// connection to commit its marker after pinning the snapshot. Serving writers
+	// neither use nor need this advisory
 	// lock: their compatibility follows from atomic earning+summary commits.
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -63,7 +65,7 @@ func (s *PostgresStore) applyEarningsSummaryMigration(ctx context.Context) (bool
 	if done {
 		return false, nil
 	}
-	if err := prepareEarningsSummaryBackfill(ctx, conn); err != nil {
+	if err := prepareEarningsSummaryBackfill(ctx, conn, s.claimEarningsSummaryAttempt); err != nil {
 		return false, err
 	}
 	for {

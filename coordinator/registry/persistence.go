@@ -26,18 +26,27 @@ func (r *Registry) SetStore(st store.Store) {
 // onto a live provider. Called after a provider reconnects and is matched to
 // its stored state by serial number or SE key.
 func (r *Registry) RestoreProviderState(p *Provider, rec *store.ProviderRecord) error {
+	return r.RestoreProviderStateContext(context.Background(), p, rec)
+}
+
+// RestoreProviderStateContext shares registration's cancellation/deadline with
+// the reputation read, rather than extending a failed lookup with another wait.
+func (r *Registry) RestoreProviderStateContext(ctx context.Context, p *Provider, rec *store.ProviderRecord) error {
 	if rec == nil {
 		return nil
 	}
 	var repRec *store.ReputationRecord
 	if r.store != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		var err error
 		repRec, err = r.store.GetReputation(ctx, rec.ID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return fmt.Errorf("restore reputation: %w", err)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	p.mu.Lock()

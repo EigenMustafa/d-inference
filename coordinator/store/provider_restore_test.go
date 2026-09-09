@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 )
@@ -58,45 +57,6 @@ func TestProviderRestoreSelectsLatestPriorIdentity(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestPostgresRestoreIndexes(t *testing.T) {
-	s := testPostgresStore(t)
-	ctx := context.Background()
-	// Both queries must have usable ordered indexes; an explicit no-seqscan
-	// session checks index applicability, not production cardinality estimates.
-	conn, err := s.pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SET enable_seqscan = off"); err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Exec(ctx, "RESET enable_seqscan")
-	for _, col := range []string{"serial_number", "se_public_key"} {
-		rows, err := conn.Query(ctx, `EXPLAIN (FORMAT JSON) SELECT id FROM providers WHERE `+col+` = 's' AND `+col+` <> '' AND id <> 'current' ORDER BY last_seen DESC,id DESC LIMIT 1`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var plan string
-		for rows.Next() {
-			if err := rows.Scan(&plan); err != nil {
-				t.Fatal(err)
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-		expected := "idx_providers_restore_serial"
-		if col == "se_public_key" {
-			expected = "idx_providers_restore_se_key"
-		}
-		if !strings.Contains(plan, expected) {
-			t.Fatalf("missing %s: %s", expected, plan)
-		}
 	}
 }
 

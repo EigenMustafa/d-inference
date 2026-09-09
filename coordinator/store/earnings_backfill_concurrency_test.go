@@ -69,7 +69,7 @@ func TestEarningsSummaryBackfillOldWriterCommitBeforeApply(t *testing.T) {
 	// sees historical work/base rewards and neither half of the uncommitted CTE.
 	planCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	if err := prepareEarningsSummaryBackfill(planCtx, s.pool); err != nil {
+	if err := prepareEarningsSummaryBackfill(planCtx, s.pool, s.claimEarningsSummaryAttempt); err != nil {
 		t.Fatalf("planning blocked old writer: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -89,7 +89,7 @@ func TestEarningsSummaryBackfillOldWriterCommitBeforeApply(t *testing.T) {
 func TestEarningsSummaryBackfillApplyBeforeOldWriterCommit(t *testing.T) {
 	s := seededLegacyEarningsStore(t)
 	ctx := context.Background()
-	if err := prepareEarningsSummaryBackfill(ctx, s.pool); err != nil {
+	if err := prepareEarningsSummaryBackfill(ctx, s.pool, s.claimEarningsSummaryAttempt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.applyEarningsSummaryMigration(ctx); err != nil {
@@ -116,7 +116,7 @@ func TestEarningsSummaryBackfillWaitsForOldWriterWithoutLosingDelta(t *testing.T
 	}
 	defer tx.Rollback(ctx)
 	executeOldServingCredit(t, tx)
-	if err := prepareEarningsSummaryBackfill(ctx, s.pool); err != nil {
+	if err := prepareEarningsSummaryBackfill(ctx, s.pool, s.claimEarningsSummaryAttempt); err != nil {
 		t.Fatal(err)
 	}
 	// Apply while the old transaction still owns its counter locks. A canceled

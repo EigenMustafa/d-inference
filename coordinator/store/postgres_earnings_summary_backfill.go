@@ -23,13 +23,12 @@ const earningsSummaryBackfillPendingDDL = `CREATE TABLE IF NOT EXISTS earnings_s
  PRIMARY KEY (key, key_type)
 )`
 
-// Both key types use ONE MVCC statement snapshot. Existing serving writers
-// atomically insert an earning and increment both summaries in the same SQL
-// statement/transaction. A concurrent commit is therefore either fully visible
-// (its existing counters are left alone) or fully absent (its increments will
-// coexist with the historical delta). No history scan blocks those writers.
-// Legacy record-only/import writers without atomic summary maintenance must be
-// quiesced during preparation; they do not satisfy this invariant.
+// Both key types use the REPEATABLE READ snapshot pinned before the durable
+// attempted-plan marker is written. Old atomic earning/summary writers committing
+// after that boundary are absent from both reads; their increments coexist with
+// the captured history when its delta is applied later. Counters already present
+// at the pinned boundary are preserved, not reconstructed or repaired.
+// Legacy record-only/import writers must be quiesced during preparation.
 const planEarningsSummaryBackfill = `WITH missing_history AS MATERIALIZED (
  SELECT e.account_id AS key, 'account' AS key_type,
   COUNT(*) FILTER (WHERE e.model <> 'base_reward') AS total_count,
@@ -53,36 +52,45 @@ const planEarningsSummaryBackfill = `WITH missing_history AS MATERIALIZED (
 INSERT INTO earnings_summary_backfill_pending
  SELECT key,key_type,total_count,total_micro_usd,total_prompt_tokens,total_completion_tokens FROM missing_history`
 
-func prepareEarningsSummaryBackfill(ctx context.Context, db earningsSummaryMigrationDB) error {
-	// Persist uncertainty before taking the initial history snapshot. If that
-	// transaction aborts, an old live writer may have created a formerly absent
-	// counter meanwhile. Replanning would silently treat that partial counter as
-	// pre-existing. Refuse automatic replan; a completed plan can always resume.
-	claim, err := db.Exec(ctx, `INSERT INTO schema_migrations(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, earningsSummaryPlanAttemptID)
-	if err != nil {
+// claimAttempt must commit through a separate connection, outside the pinned
+// planning transaction, so its marker survives cancellation or plan rollback.
+func prepareEarningsSummaryBackfill(ctx context.Context, db earningsSummaryMigrationDB, claimAttempt func(context.Context) (bool, error)) error {
+	var ready, attempted bool
+	if err := db.QueryRow(ctx, `SELECT
+  EXISTS(SELECT 1 FROM schema_migrations WHERE id=$1),
+  EXISTS(SELECT 1 FROM schema_migrations WHERE id=$2)`, earningsSummaryPlanID, earningsSummaryPlanAttemptID).Scan(&ready, &attempted); err != nil {
 		return err
 	}
-	if claim.RowsAffected() == 0 {
-		var ready bool
-		if err := db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id=$1)`, earningsSummaryPlanID).Scan(&ready); err != nil {
-			return err
-		}
-		if ready {
-			return nil
-		}
+	if ready {
+		return nil
+	}
+	if attempted {
 		return fmt.Errorf("store: earnings summary initial plan is incomplete; quiesce writers and reconcile existing summaries before explicitly resetting the attempted-plan marker")
 	}
-	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// BEGIN alone does not establish a PostgreSQL snapshot. Pin it explicitly
+	// before any writer can observe the attempted marker. The ID is not logged.
+	var snapshot string
+	if err := tx.QueryRow(ctx, `SELECT pg_current_snapshot()::text`).Scan(&snapshot); err != nil {
+		return fmt.Errorf("store: pin earnings summary snapshot: %w", err)
+	}
+	claimed, err := claimAttempt(ctx)
+	if err != nil {
+		return fmt.Errorf("store: earnings attempted-marker write failed or is uncertain; pinned plan was not applied: %w", err)
+	}
+	if !claimed {
+		return fmt.Errorf("store: earnings attempted-marker already claimed; pinned plan was not applied")
+	}
 	tag, err := tx.Exec(ctx, `INSERT INTO schema_migrations(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, earningsSummaryPlanID)
 	if err != nil {
 		return fmt.Errorf("store: claim earnings summary plan: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return nil
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("store: earnings ready-plan marker appeared during planning; pinned plan was not applied")
 	}
 	if _, err := tx.Exec(ctx, planEarningsSummaryBackfill); err != nil {
 		return fmt.Errorf("store: plan earnings summary backfill: %w", err)

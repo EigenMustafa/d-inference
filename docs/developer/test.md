@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-08 · commit `ad9b7d2b1`
+> Last updated: 2026-09-08 · commit `501320342`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -124,8 +124,13 @@ go test -p 1 ./store ./cmd/coordinator -run 'Test(EarningsSummary|RecordProvider
 go test -race ./api ./registry -run 'Test(ProviderRestore|RestoreProviderState|AttachCachedMDAProof|StageDurableMDAChain)' -count=1
 ```
 
-These check one-time aggregation and rollback, a repeated boot while earnings
-history is exclusively locked, newest-prior identity lookup through CachedStore,
+These check captured-history recovery across old-style live writes and canceled
+application, refusal to silently replan an aborted initial snapshot, resumable
+per-key updates without double-counting, base-reward work
+exclusion, a repeated boot while earnings history is exclusively locked,
+concurrent reconnect exclusion, late initial/reputation-write ordering, atomic
+provider/reputation publication and rollback, and newest-prior
+identity lookup through CachedStore,
 index applicability, MDA trust caps, and a migration-only subprocess that exits
 without HTTP startup or admin-key seeding. They do not measure production startup
 latency or validate an overlapping coordinator handoff.

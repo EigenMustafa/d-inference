@@ -5,7 +5,7 @@
 - Add a read-only post-stop startup observer that separates candidate health/readiness and per-model routable capacity from optional disposable-test inference. Keep successful inference and synthetic-answer correctness distinct, and omit response text, usage and credentials from reports.
 
 - Recover provider history on reconnect through indexed identity lookups instead of scanning every historical session before serving. Select the newest prior session and preserve live attestation requirements.
-- Run the earnings-summary history backfill once transactionally; maintain summaries on record-only inserts as well as account settlement. Add startup phase timings and a database-only migration command for approved preparation before cutover.
+- Capture missing earnings-summary history once and resume per-key additions safely alongside existing live settlement; keep base-reward money separate from inference counts/tokens. Exclude incomplete and live reconnect records from history recovery, including late async writes. Publish completed provider records and reputation atomically, preserving legacy missing-reputation behavior while refusing failed reads. Maintain summaries on record-only inserts as well as account settlement. Add startup phase timings and a database-only migration command for approved preparation before cutover.
 
 ## Unreleased — per-model cache reporting
 

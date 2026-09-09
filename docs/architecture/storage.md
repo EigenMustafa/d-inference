@@ -1,6 +1,6 @@
 # Storage
 
-> Last updated: 2026-09-08 · commit `884d97862`
+> Last updated: 2026-09-08 · commit `501320342`
 
 What the coordinator persists, through which interface, in which backend, and
 how the schema reaches a fresh database; then what a provider keeps on its own
@@ -106,13 +106,34 @@ behind a long query's lock). `coordinator/deploy/start.sh` does not touch the
 database; it only prepares the persistent disk and MicroMDM before `exec
 coordinator`.
 
-The earnings-summary backfill claims `backfill_earnings_summary_v1` and fills
-missing account/provider summary keys in one transaction. Existing summaries
-are preserved; a rollback removes both the inserts and marker. Later boots read
-the marker without scanning `provider_earnings`. Both `CreditProviderAccount`
-and `RecordProviderEarning` maintain new summaries from the earning insert's
-`RETURNING` rows, so duplicate non-empty job IDs never increment counters twice.
-The record-only method does not credit balances or create ledger entries.
+The earnings-summary backfill captures missing account and provider keys in a
+single `READ COMMITTED` statement snapshot, and commits their historical deltas
+to `earnings_summary_backfill_pending` alongside a plan marker. Existing counters
+at that snapshot are preserved. A short transaction adds one pending key to its
+live counter and removes the pending item atomically; the final
+`backfill_earnings_summary_v1` marker is recorded only after the queue is empty.
+Retries resume committed progress without rescanning history or double-adding
+applied keys. Migration runners serialize on a session advisory lock using one
+leased connection; serving writers do not participate in that lock. An attempted-plan
+marker is committed before initial planning. If that snapshot aborts, a retry
+refuses to replan because live writers may meanwhile have created partial
+counters. The coordinator remains unready until explicit reconciliation; an
+already committed plan continues automatically from its pending keys.
+
+The existing `CreditProviderAccount` and `SettleProviderFloorDraw` SQL statements
+insert earnings and update both summaries atomically. A live writer that creates
+a counter after the planning snapshot retains its increment when the captured
+historical delta is added. Historical scans take no writer-blocking table locks,
+and per-key application never holds an account row while waiting on a provider
+row. Offline imports or an old record-only writer without atomic summary updates
+must be quiesced during preparation. Already inconsistent counters at the
+planning snapshot are not recomputed or silently repaired.
+
+`RecordProviderEarning` and `CreditProviderAccount` maintain new summaries from
+inserted earning rows, so duplicate non-empty job IDs never increment twice.
+`base_reward` contributes money but zero inference count/tokens, matching floor
+draw settlement and MemoryStore. The record-only method does not credit balances
+or create ledger entries.
 
 Postgres startup logs connection time and individual schema statement durations
 as bounded phase labels, plus named backfills/index phases. Logs omit SQL and
@@ -125,8 +146,17 @@ for the approval and compatibility boundary.
 Provider history is recovered on demand after successful live SE attestation,
 using `GetProviderForRestore` with the verified serial first, then SE key if
 no serial record exists. Ordered partial indexes on each identity plus
-`last_seen DESC, id DESC` select the newest prior session. The current session
-is excluded because registration persists asynchronously. `NewServer` does
+`last_seen DESC, id DESC` select the newest prior session. Every currently registered session is excluded, and a returned row is checked
+again for sessions arriving during lookup. Until history lookup/restoration
+finishes, persisted rows omit the indexed serial and SE key, including late writes
+from a registration that already disconnected. Provider-record and reputation persistence share a mutex, and pending reputation
+writes are skipped. Completed records publish together with their reputation in
+one Postgres transaction or MemoryStore lock (`UpsertProviderWithReputation`,
+`coordinator/store/provider_record_write.go`), so an older zero snapshot cannot
+overwrite the completed state and no completed identity appears without its
+reputation. A history or unexpected reputation read error leaves the identity
+unpublished; a later reconnect retries against preserved history. Missing legacy
+reputation is allowed. There is no timer that marks a failed lookup complete. `NewServer` does
 not scan historical providers. The existing `RestoreProviderState` trust cap
 and independent newest-nonempty-MDA-chain re-verification remain in force.
 Store errors are logged and do not grant hardware trust. Reputation is still
@@ -158,7 +188,7 @@ Roughly forty tables; grouped by what would be lost if the family vanished.
 | Usage and routing telemetry | `usage`, `usage_totals`, `inference_routes`, `request_rejections`, `request_profiles`, `fleet_snapshots`, `request_outcomes` | Row per request, per dispatched attempt, per rejection, per profiled attempt, per fleet sample; `usage_totals` is a single-row counter kept by `migrateUsageTotals`. |
 | Provider fleet and trust | `providers`, `provider_reputation`, `provider_sessions`, `provider_trust_reuse`, `provider_verification_jobs`, `code_attestations`, `code_attest_push_budgets`, `provider_log_reports` | Trust reuse and code attestations are durable. `code_attestations.continuous_coverage_until` is compare-and-updated only for the exact original proof tuple; it never refreshes `attested_at` or inserts proof. This allows bounded same-process resume after a redeploy; see [`security/attestation.md`](security/attestation.md). `provider_log_reports.serial_number` is kept empty by trigger. |
 | Models and releases | `model_registry`, `model_versions`, `model_version_files`, `model_active_versions`, `model_aliases`, `releases` | The catalog the registry syncs at boot; see [`model-registry.md`](model-registry.md). |
-| Bookkeeping | `schema_migrations` | Markers for one-shot data migrations. |
+| Bookkeeping | `schema_migrations`, `earnings_summary_backfill_pending` | Completion/plan markers and resumable per-key historical deltas. |
 
 ### Global Payouts state
 
@@ -218,9 +248,10 @@ KV blocks under a per-model key, not tokens.
    in `PostgresStore.migrate` can run on an already-migrated database; the
    process serves traffic only after the whole slice succeeds
    (`coordinator/store/postgres.go`).
-3. **One-shot data migrations run at most once.** They test and insert their
-   marker in `schema_migrations` inside the same transaction
-   (`coordinator/store/postgres.go`).
+3. **Committed migration progress is not applied twice.** Small migrations
+   commit their marker with their update. Earnings backfill commits its plan,
+   then each delta with pending-row deletion, before recording completion
+   (`coordinator/store/postgres_earnings_summary_backfill.go`).
 4. **Boot never holds a long lock on a hot table.** The
    `provider_earnings(job_id)` unique index is built `CONCURRENTLY`, only after
    a duplicate check, and skipped when already valid; the dedupe that violated

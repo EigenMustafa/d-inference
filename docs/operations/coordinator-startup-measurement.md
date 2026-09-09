@@ -1,11 +1,16 @@
 # Measure coordinator startup after the old process stops
 
-> Last updated: 2026-09-08 · commit `ad9b7d2b1`
+> Last updated: 2026-09-08 · commit `501320342`
 
 Use `scripts/measure-coordinator-startup.py` to observe the interval after the
 old coordinator stops. The preceding drain is outside this measurement. The
 tool performs no restart, hotswap, migration, configuration change, or APNs
 mutation. Default mode only reads public health, readiness and capacity.
+
+## When to use
+
+Use this observer during an approved upgrade or a disposable rehearsal to measure
+post-stop recovery. It records evidence; it does not authorize or execute a swap.
 
 ## Prerequisites
 
@@ -26,7 +31,9 @@ Migrations and new index creation must be prepared separately under the
 First-install backfills/indexes can still delay startup; the observer does not
 skip them or establish a five-second target in advance.
 
-## Read-only observation
+## Steps
+
+### 1. Observe health, readiness and per-model capacity
 
 Populate the timestamp/build variables from the deployment record, then run:
 
@@ -69,7 +76,7 @@ network time, unverified cross-host clock alignment and the capacity endpoint's
 existing two-second cache limit timing precision. Readiness and capacity are
 samples, not continuous-availability guarantees or proof of successful inference.
 
-## Optional inference in a disposable test environment
+### 2. Optionally probe inference in a disposable test environment
 
 Only use an explicitly authorized test account and disposable environment.
 Supply a JSON configuration such as:
@@ -97,7 +104,7 @@ memory and discarded: availability success and exact synthetic-answer correctnes
 are separate booleans. This small check does not qualify model quality, trust
 correctness, billing, encryption, or sustained load behavior.
 
-## Read the outcome
+## Verification
 
 - Exit `0`: the selected observation target was reached. In read-only mode this
   means readiness plus simultaneous per-model capacity; `inference_verified`
@@ -111,3 +118,16 @@ correctness, billing, encryption, or sustained load behavior.
 
 No result authorizes a deployment. Keep the 45-second drain decision separate
 from measured post-stop startup downtime and from any future traffic-handoff work.
+
+## Rollback
+
+Read-only observation changes no service state and needs no service rollback.
+Stop the observer to end polling. In test mode, stopping it prevents future
+probes; completed synthetic requests and their test-account usage are not undone.
+Keep reports when they are needed as deployment evidence.
+
+## Related
+
+- [Coordinator deployment](coordinator-deploy.md) — approved preparation, swap and rollback.
+- [Coordinator tests](../developer/test.md#coordinator-startup-and-reconnect-recovery) — local observer and startup regression tests.
+- [Storage](../architecture/storage.md) — durable history recovery and migration progress.

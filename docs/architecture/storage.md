@@ -141,6 +141,17 @@ inserted earning rows, so duplicate non-empty job IDs never increment twice.
 draw settlement and MemoryStore. The record-only method does not credit balances
 or create ledger entries.
 
+Normal upgrades do not require subtracting historical base rewards from existing
+summaries: `SettleProviderFloorDraw` has atomically maintained both summary rows
+with zero work since base rewards were introduced, and the former startup
+backfill used `ON CONFLICT DO NOTHING`. Its all-row count therefore did not
+overwrite those maintained summaries. Imported earnings or manually deleted and
+rebuilt summaries can have different provenance and require evidence-backed
+reconciliation. Neither subtracting every retained base reward nor replacing
+lifetime counters from retained detail rows is a safe general repair; the
+upgrade regression in `coordinator/store/earnings_summary_legacy_upgrade_test.go`
+checks the production sequence and preservation of lifetime totals.
+
 Postgres startup logs connection time and individual schema statement durations
 as bounded phase labels, plus named backfills/index phases. Logs omit SQL and
 parameters. The first boot that installs the new marker still performs the

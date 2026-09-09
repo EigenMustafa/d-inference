@@ -141,6 +141,7 @@ extension EngineV2Bridge {
         prefixCacheStatsTask = nil
         prefixCacheTelemetry.close()
         statsTask?.cancel()
+        slotPostureClosed = true
         slotPostureTask?.cancel()
         slotPostureTask = nil
         let live = pumpTasks

@@ -23,7 +23,7 @@ final class StagedProviderMTPUpgrade: @unchecked Sendable {
 
 extension ProviderLoop {
     var mtpStagingBytes: UInt64 {
-        mtpStagingReservations.extraBytes(residentTargets: Set(modelSlots.values.map { ObjectIdentifier($0.engineV2) }))
+        mtpStagingReservations.extraBytes(residentTargets: Set(modelSlots.values.map { ObjectIdentifier($0.container) }))
     }
 
     func startMTPUpgradeMonitor() {
@@ -77,11 +77,11 @@ extension ProviderLoop {
         }.sorted()
     }
 
-    func prepareMTPUpgrade(_ modelID: String) async throws -> StagedProviderMTPUpgrade? {
+    func prepareMTPUpgrade(_ modelID: String, modelDirectory: URL? = nil) async throws -> StagedProviderMTPUpgrade? {
         guard pendingMTPUpgradeModels().contains(modelID), !isLoadingAny,
             let original = modelSlots[modelID],
             let info = advertisedModels[modelID],
-            let directory = ModelScanner.resolveLocalPath(modelID: modelID)
+            let directory = modelDirectory ?? ModelScanner.resolveLocalPath(modelID: modelID)
         else { return nil }
         // Cache misses only schedule the funnel-owned fetch and return. The
         // current engine remains registered and accepts all ordinary traffic.
@@ -102,7 +102,7 @@ extension ProviderLoop {
             throw MTPIdleUpgrade.PreparationError.insufficientMemory
         }
         await acquireResliceGate()
-        mtpStagingReservations.reserve(lease, target: ObjectIdentifier(original.engineV2),
+        mtpStagingReservations.reserve(lease, target: ObjectIdentifier(original.container),
             targetBytes: UInt64(max(0, original.sizing.weightsBytes)),
             assistantBytes: artifact.residentBytes, kvBytes: UInt64(grant))
         releaseResliceGate()
@@ -193,6 +193,8 @@ extension ProviderLoop {
         // its pool before the minimal replacement grant is grown.
         await staged.original.engineV2.shutdown()
         staged.original.engineBundle.releaseAssistant()
+        await staged.replacement.bridge.startSSDPrefixCacheStatsLogger()
+        await staged.replacement.bridge.configureMTPStatus(staged.replacement.mtpStatus)
         MLX.Memory.clearCache()
         mtpStagingReservations.release(staged.lease)
         await kvBudget.finishPendingLoad(staged.lease)

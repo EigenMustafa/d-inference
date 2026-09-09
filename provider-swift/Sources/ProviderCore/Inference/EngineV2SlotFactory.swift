@@ -292,6 +292,7 @@ enum EngineV2SlotFactory {
         assemblyOverrides: AssemblyOverrides = AssemblyOverrides(),
         environment: [String: String] = ProcessInfo.processInfo.environment,
         persistentTestNamespace: SSDPersistentTestKeyNamespace? = nil,
+        startServingTelemetry: Bool = true,
         emitTelemetry: (@Sendable (TelemetryEvent) -> Void)? = nil,
         makeEngineOverride: (@Sendable (String, Int) throws -> any CBv2Engine)? = nil,
         assistantLoader: any ProviderMTPAssistantLoading = ProductionProviderMTPAssistantLoader(),
@@ -704,8 +705,9 @@ enum EngineV2SlotFactory {
             emitTelemetry: emitTelemetry,
             makeEngine: makeEngine)
 
-        await bridge.startSSDPrefixCacheStatsLogger()
-        await bridge.configureMTPStatus(mtpStatus)
+        if startServingTelemetry { await bridge.startSSDPrefixCacheStatsLogger() }
+        await bridge.configureMTPStatus(mtpStatus,
+            metricsInterval: startServingTelemetry ? .seconds(60) : .zero)
         if let gemmaModel = servingModel as? Gemma4TextModel {
             // One load-time snapshot only. Never arm the benchmark counters in
             // production: the QMM hot path remains free of counter atomics.

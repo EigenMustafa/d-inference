@@ -56,37 +56,38 @@ private actor StandaloneUpgradeSlowCatalog: SpecDecCatalogLooking {
     func model(id: String) async throws -> CatalogModel? { await gate.wait(); return nil }
 }
 
-private struct StandaloneUpgradeFixture {
+private struct StandaloneUpgradeFixture: Sendable {
     let server: StandaloneServer
     let original: EngineV2Bridge
     let originalEngine: StandaloneUpgradeScriptedEngine
     let factory: StandaloneUpgradeScriptedFactory
+    let telemetry: UpgradePostureSink
     let artifact: SpecDecArtifact
-    let createdScannerPath: URL?
+    let targetDirectory: URL
 
     static func make(shutdownBarrier: UpgradeBarrier? = nil, useLocalAssistant: Bool = true) async throws -> Self {
         let artifact = try mtpFloorArtifact()
-        var createdScannerPath: URL?
-        if ModelScanner.resolveLocalPath(modelID: standaloneUpgradeModelID) == nil {
-            let hub = try #require(ModelScanner.defaultCacheDirectory())
-            let model = hub.appendingPathComponent("models--\(standaloneUpgradeModelID)")
-            let ownedModel = !FileManager.default.fileExists(atPath: model.path)
-            let snapshot = model.appendingPathComponent("snapshots/standalone-mtp-upgrade-test-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
-            try Data("{}".utf8).write(to: snapshot.appendingPathComponent("config.json"))
-            createdScannerPath = ownedModel ? model : snapshot
-        }
+        let targetDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mtp-upgrade-target-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: targetDirectory.appendingPathComponent("config.json"))
         let server = StandaloneServer(config: .init(mtpMode: .auto, mtpDrafterPath: useLocalAssistant ? artifact.directory.path : nil),
             models: [ModelInfo(id: standaloneUpgradeModelID, modelType: "gemma4", sizeBytes: 1, estimatedMemoryGb: 1)])
+        let telemetry = UpgradePostureSink()
         let factory = StandaloneUpgradeScriptedFactory()
         await server.setV2TestHooksForTesting(.init(physicalMemoryBytes: 64 << 30,
+            emitTelemetry: { telemetry.record($0) },
             assistantLoader: MTPFloorAssistantLoader(), makeEngine: { _, bytes in try factory.make(bytes) }))
         let engine = StandaloneUpgradeScriptedEngine(bytes: 1 << 30, shutdownBarrier: shutdownBarrier)
         let bridge = EngineV2Bridge(engine: engine, modelId: standaloneUpgradeModelID,
             tokenizer: TokenizerHandle(MTPFloorTokenizer()), eosTokenIds: [])
         await server.installStandaloneUpgradeFixture(bridge)
         return Self(server: server, original: bridge, originalEngine: engine,
-            factory: factory, artifact: artifact, createdScannerPath: createdScannerPath)
+            factory: factory, telemetry: telemetry, artifact: artifact, targetDirectory: targetDirectory)
+    }
+
+    func prepare() async throws -> StagedStandaloneMTPUpgrade? {
+        try await server.prepareMTPUpgrade(standaloneUpgradeModelID, modelDirectory: targetDirectory)
     }
 
     func checkOriginal() async {
@@ -96,7 +97,7 @@ private struct StandaloneUpgradeFixture {
     func clean() async {
         await server.cleanStandaloneUpgradeFixture()
         try? FileManager.default.removeItem(at: artifact.directory)
-        if let createdScannerPath { try? FileManager.default.removeItem(at: createdScannerPath) }
+        try? FileManager.default.removeItem(at: targetDirectory)
     }
 }
 
@@ -134,7 +135,8 @@ struct StandaloneMTPUpgradeTests {
     @Test("local reservations and engine work preserve the old engine until idle")
     func busyThenIdle() async throws {
         let fixture = try await StandaloneUpgradeFixture.make()
-        let staged = try #require(try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID))
+        let staged = try #require(try await fixture.prepare())
+        #expect(fixture.telemetry.postureCount == 0)
         let stagingBytes = await fixture.server.mtpStagingBytes
         #expect(stagingBytes == fixture.artifact.residentBytes + EngineV2KVSizing.minimumServiceableGrantBytes)
         await fixture.server.resliceForUpgradeAccountingTest()
@@ -155,6 +157,7 @@ struct StandaloneMTPUpgradeTests {
         #expect(await fixture.server.upgradeBridge() === staged.replacement.bridge)
         #expect(await fixture.server.upgradeWeightHash() == String(repeating: "a", count: 64))
         #expect(fixture.originalEngine.shutdownCount == 1)
+        #expect(fixture.telemetry.postureCount == 1)
         #expect(await fixture.server.debugOutstandingKVReservationBytes() == 0)
         #expect(await fixture.server.mtpStagingBytes == 0)
         await fixture.clean()
@@ -164,9 +167,11 @@ struct StandaloneMTPUpgradeTests {
     func admissionWaitsForCutover() async throws {
         let barrier = UpgradeBarrier()
         let fixture = try await StandaloneUpgradeFixture.make(shutdownBarrier: barrier)
-        let staged = try #require(try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         let commit = Task { try await fixture.server.commitMTPUpgradeIfIdle(staged) }
         await barrier.observeEntry()
+        #expect(await fixture.server.mtpStagingBytes == fixture.artifact.residentBytes + EngineV2KVSizing.minimumServiceableGrantBytes)
+        #expect(fixture.telemetry.postureCount == 0)
         let admission = Task { try await fixture.server.acquireModel(standaloneUpgradeModelID) }
         for _ in 0..<2_000 {
             if await fixture.server.upgradeAdmissionWaiterCount() > 0 { break }
@@ -187,7 +192,7 @@ struct StandaloneMTPUpgradeTests {
         let fixture = try await StandaloneUpgradeFixture.make()
         fixture.factory.failBuild()
         await #expect(throws: StandaloneUpgradeScriptedFactory.Failure.self) {
-            _ = try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID)
+            _ = try await fixture.prepare()
         }
         await fixture.checkOriginal()
         #expect(await fixture.server.debugOutstandingKVReservationBytes() == 0)
@@ -201,7 +206,7 @@ struct StandaloneMTPUpgradeTests {
     @Test("cancellation while busy discards the candidate and keeps target serving")
     func cancellationWhileBusy() async throws {
         let fixture = try await StandaloneUpgradeFixture.make()
-        let staged = try #require(try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         let pause = UpgradeBarrier()
         fixture.originalEngine.setBusy(true)
         let task = Task {
@@ -224,7 +229,7 @@ struct StandaloneMTPUpgradeTests {
     @Test("unloaded target stays accounted while retained by stale preparation")
     func staleTargetAccounting() async throws {
         let fixture = try await StandaloneUpgradeFixture.make()
-        let staged = try #require(try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         let before = await fixture.server.mtpStagingBytes
         await fixture.server.removeUpgradeTarget()
         #expect(await fixture.server.mtpStagingBytes == before + (1 << 30))
@@ -243,7 +248,7 @@ struct StandaloneMTPUpgradeTests {
     func deferredRemovalAtCutover() async throws {
         let barrier = UpgradeBarrier()
         let fixture = try await StandaloneUpgradeFixture.make(shutdownBarrier: barrier)
-        let staged = try #require(try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         let commit = Task { try await fixture.server.commitMTPUpgradeIfIdle(staged) }
         await barrier.observeEntry()
         #expect(await fixture.server.setModels([]))
@@ -263,7 +268,7 @@ struct StandaloneMTPUpgradeTests {
         let funnel = SpecDecArtifactFunnel(resolver: SpecDecResolver(),
             catalog: StandaloneUpgradeSlowCatalog(gate))
         await fixture.server.setSpecDecFunnelForTesting(funnel)
-        #expect(try await fixture.server.prepareMTPUpgrade(standaloneUpgradeModelID) == nil)
+        #expect(try await fixture.prepare() == nil)
         await gate.observeEntry()
         for _ in 0..<3 {
             let acquired = try await fixture.server.acquireModel(standaloneUpgradeModelID)
@@ -276,25 +281,48 @@ struct StandaloneMTPUpgradeTests {
         await fixture.clean()
     }
 
-    @Test("independent standalone providers activate separately without interrupting the busy provider")
-    func independentProviders() async throws {
-        let first = try await StandaloneUpgradeFixture.make()
-        let second = try await StandaloneUpgradeFixture.make()
-        async let firstPrepared = first.server.prepareMTPUpgrade(standaloneUpgradeModelID)
-        async let secondPrepared = second.server.prepareMTPUpgrade(standaloneUpgradeModelID)
-        let (firstValue, secondValue) = try await (firstPrepared, secondPrepared)
-        let firstStaged = try #require(firstValue)
-        let secondStaged = try #require(secondValue)
-        let acquired = try await first.server.acquireModel(standaloneUpgradeModelID)
-        #expect(try await !first.server.commitMTPUpgradeIfIdle(firstStaged))
-        #expect(try await second.server.commitMTPUpgradeIfIdle(secondStaged))
-        await first.checkOriginal()
-        await acquired.releaseToken.fire()
-        #expect(try await first.server.commitMTPUpgradeIfIdle(firstStaged))
-        #expect(await first.server.mtpStagingBytes == 0)
-        #expect(await second.server.mtpStagingBytes == 0)
-        await second.clean()
-        await first.clean()
+    @Test("simultaneous standalone providers retain busy originals and isolate failed preparations", arguments: [2, 16])
+    func independentProviders(count: Int) async throws {
+        var fixtures: [StandaloneUpgradeFixture] = []
+        for index in 0..<count {
+            let fixture = try await StandaloneUpgradeFixture.make()
+            if index % 5 == 4 { fixture.factory.failBuild() }
+            await fixture.server.reserveSlot(standaloneUpgradeModelID)
+            fixtures.append(fixture)
+        }
+        let candidates = try await withThrowingTaskGroup(
+            of: (Int, StagedStandaloneMTPUpgrade?).self,
+            returning: [Int: StagedStandaloneMTPUpgrade].self
+        ) { group in
+            for (index, fixture) in fixtures.enumerated() {
+                group.addTask {
+                    do { return (index, try await fixture.prepare()) }
+                    catch StandaloneUpgradeScriptedFactory.Failure.injected { return (index, nil) }
+                }
+            }
+            var prepared: [Int: StagedStandaloneMTPUpgrade] = [:]
+            for try await (index, candidate) in group { prepared[index] = candidate }
+            return prepared
+        }
+        for (index, fixture) in fixtures.enumerated() {
+            await fixture.checkOriginal()
+            // Normal acquisition still sees the original on every provider,
+            // including peers whose preparation failed independently.
+            let acquired = try await fixture.server.acquireModel(standaloneUpgradeModelID)
+            #expect(acquired.engineV2Bridge === fixture.original)
+            await acquired.releaseToken.fire()
+            if let staged = candidates[index] {
+                #expect(try await !fixture.server.commitMTPUpgradeIfIdle(staged))
+                await fixture.server.releaseSlot(standaloneUpgradeModelID)
+                #expect(try await fixture.server.commitMTPUpgradeIfIdle(staged))
+            } else {
+                #expect(index % 5 == 4)
+                await fixture.server.releaseSlot(standaloneUpgradeModelID)
+                await fixture.checkOriginal()
+            }
+            #expect(await fixture.server.mtpStagingBytes == 0)
+            #expect(await fixture.server.debugOutstandingKVReservationBytes() == 0)
+        }
+        for fixture in fixtures { await fixture.clean() }
     }
-
 }

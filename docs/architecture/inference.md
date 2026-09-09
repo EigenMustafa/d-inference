@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `d14a5a599`
+> Last updated: 2026-09-08 · commit `76a8d28c9`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -146,7 +146,9 @@ readiness asynchronously. It stages a verified assistant and an unregistered
 replacement over the retained target, with a separate pending-memory lease and
 only the minimum serviceable KV grant. Static fleet grants and network capacity
 clamps reserve the candidate's assistant and KV bytes; if the original target
-is concurrently unloaded, its retained weight basis stays counted until discard.
+is concurrently unloaded, its retained weight basis stays counted until discard. Identity follows the shared
+model container, so publishing a new bridge over that same target does not count
+the weights twice.
 Reservations follow the load generation, so delayed cleanup cannot release a
 new candidate's budget. Existing requests continue on the old
 engine. Publication waits for both network requests and local reservations to
@@ -163,7 +165,9 @@ with jitter, capped at five minutes
 Standalone uses the same coordinator catalog authority as the provider CLI
 (`coordinator.url`), downloads in the background, and retains explicit local
 assistant overrides. Transition logs report preparation duration, waiting for idle,
-installation and fallback without repeating every readiness poll. Missing, incompatible, or
+installation and fallback without repeating every readiness poll. Unpublished
+candidates suppress periodic serving posture/cache logs; these start after the
+old engine shuts down at commit, and closed bridges reject queued posture ticks. Missing, incompatible, or
 memory-ineligible assistants preserve target-only serving; explicit `off` and
 `DARKBLOOM_CBV2_MTP=0` disable MTP
 (`provider-swift/Sources/ProviderCore/Config/ProviderConfig.swift`,

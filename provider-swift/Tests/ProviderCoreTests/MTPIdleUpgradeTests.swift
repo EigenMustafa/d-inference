@@ -119,3 +119,13 @@ struct MTPIdleUpgradeTests {
         }
     }
 }
+
+
+final class UpgradePostureSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [TelemetryEvent] = []
+    func record(_ event: TelemetryEvent) { lock.withLock { events.append(event) } }
+    var postureCount: Int {
+        lock.withLock { events.filter { $0.fields?["operation"]?.description == "engine_v2_slot_posture" }.count }
+    }
+}

@@ -605,7 +605,7 @@ extension ProviderLoop {
                         kvBackendFallbackReason: nil)
                 })
             let status = preparedModel?.mtpStatus ?? specDecPreparation.status
-            await bridge.configureMTPStatus(status)
+            await bridge.configureMTPStatus(status, metricsInterval: registerInRuntime ? .seconds(60) : .zero)
             bundle = ProviderEngineBundle(
                 bridge: bridge,
                 assistant: preparedModel?.assistant,
@@ -638,6 +638,7 @@ extension ProviderLoop {
                 weightHash: cacheEligibleWeightHash,
                 specDecPreparation: specDecPreparation,
                 preparedModel: preparedModel,
+                startServingTelemetry: registerInRuntime,
                 logInfo: { slotLogger.info($0) },
                 logWarning: { slotLogger.warning($0) })
         }

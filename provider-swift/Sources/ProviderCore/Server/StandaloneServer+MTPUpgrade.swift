@@ -23,7 +23,7 @@ final class StagedStandaloneMTPUpgrade: @unchecked Sendable {
 
 extension StandaloneServer {
     var mtpStagingBytes: UInt64 {
-        mtpStagingReservations.extraBytes(residentTargets: Set(slots.values.map { ObjectIdentifier($0.bridge) }))
+        mtpStagingReservations.extraBytes(residentTargets: Set(slots.values.map { ObjectIdentifier($0.container) }))
     }
 
     func startMTPUpgradeMonitor() {
@@ -77,11 +77,11 @@ extension StandaloneServer {
         }.sorted()
     }
 
-    func prepareMTPUpgrade(_ modelID: String) async throws -> StagedStandaloneMTPUpgrade? {
+    func prepareMTPUpgrade(_ modelID: String, modelDirectory: URL? = nil) async throws -> StagedStandaloneMTPUpgrade? {
         guard pendingMTPUpgradeModels().contains(modelID), !isLoadingAny,
             let original = slots[modelID],
             let info = models.first(where: { $0.id == modelID }),
-            let directory = ModelScanner.resolveLocalPath(modelID: modelID)
+            let directory = modelDirectory ?? ModelScanner.resolveLocalPath(modelID: modelID)
         else { return nil }
         // Cache misses only schedule the funnel-owned fetch and return. The
         // current engine remains registered and accepts all ordinary traffic.
@@ -101,7 +101,7 @@ extension StandaloneServer {
             await finishMTPUpgradeLoad()
             throw MTPIdleUpgrade.PreparationError.insufficientMemory
         }
-        mtpStagingReservations.reserve(lease, target: ObjectIdentifier(original.bridge),
+        mtpStagingReservations.reserve(lease, target: ObjectIdentifier(original.container),
             targetBytes: UInt64(max(0, original.sizing.weightsBytes)),
             assistantBytes: artifact.residentBytes, kvBytes: UInt64(grant))
         let preparationStarted = ContinuousClock.now
@@ -136,6 +136,7 @@ extension StandaloneServer {
                 prefillDeadlineMode: config.prefillDeadlineMode,
                 weightHash: original.cacheEligibleWeightHash,
                 specDecPreparation: preparation, preparedModel: prepared,
+                startServingTelemetry: false,
                 emitTelemetry: v2TestHooks?.emitTelemetry,
                 makeEngineOverride: v2TestHooks?.makeEngine,
                 logInfo: { standaloneLogger.info("\($0)") },
@@ -195,6 +196,8 @@ extension StandaloneServer {
         // its pool before the minimal replacement grant is grown.
         await staged.original.bridge.shutdown()
         staged.original.bundle.releaseAssistant()
+        await staged.replacement.bridge.startSSDPrefixCacheStatsLogger()
+        await staged.replacement.bridge.configureMTPStatus(staged.replacement.mtpStatus)
         MLX.Memory.clearCache()
         mtpStagingReservations.release(staged.lease)
         await kvBudget.finishPendingLoad(staged.lease)

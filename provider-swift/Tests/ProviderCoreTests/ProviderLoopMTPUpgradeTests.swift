@@ -54,30 +54,25 @@ private struct ProviderUpgradeFixture {
     let original: EngineV2Bridge
     let originalEngine: UpgradeScriptedEngine
     let factory: UpgradeScriptedFactory
+    let telemetry: UpgradePostureSink
     let artifact: SpecDecArtifact
-    let createdScannerPath: URL?
+    let targetDirectory: URL
 
     static func make(shutdownBarrier: UpgradeBarrier? = nil) async throws -> Self {
         let artifact = try mtpFloorArtifact()
-        // Never overwrite a user's existing checkpoint. If absent, provide
-        // only an isolated scanner entry; slot hooks supply all model work.
-        var createdScannerPath: URL?
-        if ModelScanner.resolveLocalPath(modelID: upgradeModelID) == nil {
-            let hub = try #require(ModelScanner.defaultCacheDirectory())
-            let model = hub.appendingPathComponent("models--\(upgradeModelID)")
-            let ownedModel = !FileManager.default.fileExists(atPath: model.path)
-            let snapshot = model.appendingPathComponent("snapshots/mtp-upgrade-test-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
-            try Data("{}".utf8).write(to: snapshot.appendingPathComponent("config.json"))
-            createdScannerPath = ownedModel ? model : snapshot
-        }
+        let targetDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mtp-upgrade-target-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: targetDirectory.appendingPathComponent("config.json"))
         let loop = try mtpFloorLoop(models: [ModelInfo(id: upgradeModelID,
             modelType: "gemma4", sizeBytes: 1, estimatedMemoryGb: 1)],
             mtpDrafterPath: artifact.directory.path)
         let runtime = EngineV2Runtime()
+        let telemetry = UpgradePostureSink()
         let factory = UpgradeScriptedFactory()
         await loop.setEngineV2RuntimeForTesting(runtime)
         await loop.setEngineV2SlotHooksForTesting(.init(physicalMemoryBytes: 64 << 30,
+            emitTelemetry: { telemetry.record($0) },
             assistantLoader: MTPFloorAssistantLoader(),
             makeEngine: { _, bytes in try factory.make(bytes) }))
         let engine = UpgradeScriptedEngine(bytes: 1 << 30, shutdownBarrier: shutdownBarrier)
@@ -88,7 +83,11 @@ private struct ProviderUpgradeFixture {
             container: mtpFloorContainer(), tokenizer: TokenizerHandle(MTPFloorTokenizer()),
             engineV2: bridge, sizing: mtpFloorSizing(weightsGiB: 1), modelType: "gemma4")
         return Self(loop: loop, runtime: runtime, original: bridge, originalEngine: engine,
-            factory: factory, artifact: artifact, createdScannerPath: createdScannerPath)
+            factory: factory, telemetry: telemetry, artifact: artifact, targetDirectory: targetDirectory)
+    }
+
+    func prepare() async throws -> StagedProviderMTPUpgrade? {
+        try await loop.prepareMTPUpgrade(upgradeModelID, modelDirectory: targetDirectory)
     }
 
     func checkOriginal() async {
@@ -104,7 +103,7 @@ private struct ProviderUpgradeFixture {
     }
     func cleanFiles() {
         try? FileManager.default.removeItem(at: artifact.directory)
-        if let createdScannerPath { try? FileManager.default.removeItem(at: createdScannerPath) }
+        try? FileManager.default.removeItem(at: targetDirectory)
     }
 }
 
@@ -124,7 +123,8 @@ struct ProviderLoopMTPUpgradeTests {
     func realReservationsKeepOldEngineUntilIdle() async throws {
         let fixture = try await ProviderUpgradeFixture.make()
         defer { fixture.cleanFiles() }
-        let staged = try #require(try await fixture.loop.prepareMTPUpgrade(upgradeModelID))
+        let staged = try #require(try await fixture.prepare())
+        #expect(fixture.telemetry.postureCount == 0)
         #expect(await fixture.loop.outstandingKVReservationBytesForTesting() > 0)
         await fixture.checkOriginal()
         await fixture.loop.setUpgradeCoordinatorPin(true)
@@ -143,6 +143,7 @@ struct ProviderLoopMTPUpgradeTests {
         #expect(await fixture.runtime.bridge(forModel: upgradeModelID) === staged.replacement.bridge)
         #expect(await fixture.loop.slotMTPStatusForTesting(modelId: upgradeModelID)?.active == true)
         #expect(fixture.originalEngine.shutdownCount == 1)
+        #expect(fixture.telemetry.postureCount == 1)
         #expect(await fixture.loop.outstandingKVReservationBytesForTesting() == 0)
         await fixture.clean()
     }
@@ -151,7 +152,7 @@ struct ProviderLoopMTPUpgradeTests {
     func staleOriginalCannotPublish() async throws {
         let fixture = try await ProviderUpgradeFixture.make()
         defer { fixture.cleanFiles() }
-        let staged = try #require(try await fixture.loop.prepareMTPUpgrade(upgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         await fixture.runtime.unregister(modelId: upgradeModelID)
         await fixture.loop.removeModelSlotForTesting(modelId: upgradeModelID)
         await fixture.original.shutdown()
@@ -179,7 +180,7 @@ struct ProviderLoopMTPUpgradeTests {
         let shutdown = UpgradeBarrier()
         let fixture = try await ProviderUpgradeFixture.make(shutdownBarrier: shutdown)
         defer { fixture.cleanFiles() }
-        let staged = try #require(try await fixture.loop.prepareMTPUpgrade(upgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         let commit = Task { try await fixture.loop.commitMTPUpgradeIfIdle(staged) }
         await shutdown.observeEntry()
         #expect(await fixture.loop.slotBridgeForTesting(modelId: upgradeModelID) === staged.replacement.bridge)
@@ -206,7 +207,7 @@ struct ProviderLoopMTPUpgradeTests {
         defer { fixture.cleanFiles() }
         fixture.factory.failBuild()
         await #expect(throws: UpgradeScriptedFactory.Failure.self) {
-            _ = try await fixture.loop.prepareMTPUpgrade(upgradeModelID)
+            _ = try await fixture.prepare()
         }
         await fixture.checkOriginal()
         #expect(await fixture.loop.outstandingKVReservationBytesForTesting() == 0)
@@ -217,7 +218,7 @@ struct ProviderLoopMTPUpgradeTests {
     func interruptionWhileWaitingForGate(shutdown: Bool) async throws {
         let fixture = try await ProviderUpgradeFixture.make()
         defer { fixture.cleanFiles() }
-        let staged = try #require(try await fixture.loop.prepareMTPUpgrade(upgradeModelID))
+        let staged = try #require(try await fixture.prepare())
         await fixture.loop.acquireResliceGateForTesting()
         let task = Task {
             await MTPIdleUpgrade.run(prepare: { staged },

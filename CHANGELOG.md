@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — cache prompt parity and coverage
+
+- Match provider JSON response-format instructions and Qwen/Harmony system-turn folding in cache planning so structured-output requests do not generate a false prompt-anchor mismatch. Exercise the real service preparation path in shared tokenizer/hash parity tests.
+- Measure per-model saved-prefill percentages using matched prompt-token denominators, separately for provider usage, accepted evidence and cache-selected terminals. Add bounded per-model receipt rejection and prompt-length/hash mismatch diagnostics.
+- Stop queued provider slot-posture callbacks after cancellation and wait for the sampler during shutdown, preventing telemetry from being emitted after teardown returns.
+
 ## Unreleased — coordinator startup
 
 - Fix startup recovery around live summary creation and transient store failures: pin history before the attempt marker, retry verified provider recovery with a shared deadline, and exclude pending recovery from routing until it succeeds. Exhaustion closes the new registration for retry before evicting an existing provider session.

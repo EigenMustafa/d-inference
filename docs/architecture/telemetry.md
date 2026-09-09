@@ -1,6 +1,6 @@
 # Telemetry
 
-> Last updated: 2026-09-08 · commit `ada6fcea1`
+> Last updated: 2026-09-09 · commit `c8665cee1`
 
 How operational data leaves a provider, what the coordinator does with it, and
 why nothing on that path can carry a prompt or slow a request. The heartbeat is
@@ -85,6 +85,17 @@ use the same helper (`coordinator/api/chip_family_tags.go`).
 are `other` (`coordinator/api/unknown_frame_metrics.go`). Arbitrary patch
 numbers and prerelease counters cannot create new series. Exact versions
 remain in provider metadata.
+
+### Slot posture sampler lifecycle
+
+`EngineV2Bridge.configureMTPStatus` in
+`provider-swift/Sources/ProviderCore/Inference/EngineV2Bridge+MTP.swift` emits
+the opening slot-posture sample synchronously and starts a periodic task. Periodic delivery rechecks task
+cancellation inside the bridge actor, after the scheduling hop; cancellation
+while queued cannot emit a stale sample. `EngineV2Bridge.shutdown` cancels and
+joins the sampler before returning
+(`provider-swift/Sources/ProviderCore/Inference/EngineV2Bridge+Lifecycle.swift`). This preserves the opening observation while
+preventing the periodic producer from emitting after teardown.
 
 ### Durable prefix-cache observations
 

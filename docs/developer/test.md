@@ -108,6 +108,48 @@ file created during a test must be removed after shutdown.
 go test ./e2e/testbed -run '^TestCleanup' -count=1
 ```
 
+#### Coordinator startup and reconnect recovery
+
+The [startup observer](../operations/coordinator-startup-measurement.md) has
+standard-library tests using only local HTTP stubs and a deterministic clock.
+They run in Release Integrity CI and make no external inference calls:
+
+```bash
+python3 -m unittest discover -s scripts/startup_measurement -t scripts -p 'test_*.py'
+```
+
+
+Use a disposable local PostgreSQL database for the startup regressions. Store
+tests truncate tables and create/drop isolated databases; never point
+`DATABASE_URL` at a shared or production database.
+
+```bash
+cd coordinator
+# DATABASE_URL must name a throwaway local database.
+go test -p 1 ./store ./cmd/coordinator -run 'Test(EarningsSummary|LegacyFloor|RecordProviderEarningMaintains|ProviderRestore|PostgresRestore|Maintenance)' -count=1
+go test -race ./api ./registry -run 'Test(ProviderRestore|ProviderPendingRestore|RestoreProviderState|AttachCachedMDAProof|StageDurableMDAChain)' -count=1
+```
+
+These check captured-history recovery across old-style live writes and canceled
+application, refusal to silently replan an aborted initial snapshot, resumable
+per-key updates without double-counting, original floor-writer/old-boot/new-migration
+upgrade replay, preservation of lifetime totals when retained detail differs, base-reward work
+exclusion, a repeated boot while earnings history is exclusively locked,
+concurrent reconnect exclusion, late initial/reputation-write ordering, atomic
+provider/reputation publication and rollback, and newest-prior
+identity lookup through CachedStore,
+index applicability, MDA trust caps, and a migration-only subprocess that exits
+without HTTP startup or admin-key seeding. They do not measure production startup
+latency or validate an overlapping coordinator handoff.
+
+Startup recovery regressions also cover old settlement commits around the pinned
+snapshot/attempt-marker boundary, catalog-verified index definitions and isolated
+planner applicability, transient provider/reputation retries, a shared deadline,
+1013 registration teardown before duplicate eviction, and routing/capacity/load
+exclusion while a verified identity is restoring. Tests use disposable stores and
+localhost WebSockets (`coordinator/api/provider_restore_retry_test.go`,
+`coordinator/registry/provider_restore_routing_test.go`); they do not reconnect production providers.
+
 ### 3. Prompt-contract sidecar (Rust)
 
 ```bash
@@ -121,6 +163,7 @@ CI additionally builds the static Linux binary through the Dockerfile stage
 checks `file` reports `statically linked|static-pie linked`, and replays the
 production prompt vectors against it with
 `scripts/verify-prompt-sidecar-linux.sh <binary>`.
+
 
 ### 4. Provider (Swift) — unit tests with a source-matched metallib
 

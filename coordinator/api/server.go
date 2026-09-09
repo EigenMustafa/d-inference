@@ -418,12 +418,14 @@ type Server struct {
 	// endpoints (stats, leaderboard, model catalog, etc.). TTLs are
 	// per-key. Never nil.
 	readCache *ttlCache
-	// statsRefresh owns the stats:v1 readCache entry (stats.go);
+	// statsRefresh owns stats:v1 (stats.go), statsGeographyRefresh owns
+	// stats:geography:v1 (stats_geography.go);
 	// networkTotalsRefresh owns one network_totals:<window> entry per window
-	// (network_totals.go). Both are driven by the refresher machinery in
+	// (network_totals.go). All are driven by the refresher machinery in
 	// cache_refresher.go.
 	summaryWindowsFlights singleflight.Group
 	statsRefresh          cacheRefresher
+	statsGeographyRefresh cacheRefresher
 	networkTotalsRefresh  struct {
 		queryMu sync.Mutex
 		mu      sync.Mutex

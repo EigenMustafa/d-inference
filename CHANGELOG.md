@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — partial network geography
+
+- Keep network stats loading when request-location or route analytics time out. Refresh geography independently, expose unavailable sections explicitly, and show a map notice while the rest of the overview remains usable. Preserve valid empty maps and restore geography automatically after recovery.
+
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

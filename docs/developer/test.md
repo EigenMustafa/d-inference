@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-08 · commit `884d97862`
+> Last updated: 2026-09-08 · commit `ad9b7d2b1`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -103,6 +103,15 @@ go test ./e2e/testbed -run '^TestCleanup' -count=1
 ```
 
 #### Coordinator startup and reconnect recovery
+
+The [startup observer](../operations/coordinator-startup-measurement.md) has
+standard-library tests using only local HTTP stubs and a deterministic clock.
+They run in Release Integrity CI and make no external inference calls:
+
+```bash
+python3 -m unittest discover -s scripts/startup_measurement -t scripts -p 'test_*.py'
+```
+
 
 Use a disposable local PostgreSQL database for the startup regressions. Store
 tests truncate tables and create/drop isolated databases; never point

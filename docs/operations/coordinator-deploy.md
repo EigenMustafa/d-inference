@@ -1,6 +1,6 @@
 # Deploy the coordinator (production)
 
-> Last updated: 2026-09-08 · commit `884d97862`
+> Last updated: 2026-09-08 · commit `ad9b7d2b1`
 
 Runbook for swapping the production coordinator container on the GCE VM
 `darkbloom-coordinator` to a Cloud-Build image of a reviewed `master` commit,
@@ -254,6 +254,13 @@ does not answer after ~60 s, suspect a migration behind a DB lock: re-run the
 not restart the container again** — restarts stack migrations.
 
 ## Verification
+
+Measure the post-stop startup interval with the
+[startup observer](coordinator-startup-measurement.md). Supply authoritative old-stop
+and candidate-start timestamps and the exact candidate build. Its read-only mode
+separates candidate reachability/readiness and per-model capacity from actual
+inference, which remains unverified without a separately authorized test probe.
+
 
 ```bash
 HEALTH=$(curl -fsS localhost:8080/health); echo "$HEALTH"

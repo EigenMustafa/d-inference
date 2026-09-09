@@ -1,6 +1,6 @@
 # Build
 
-> Last updated: 2026-09-08 · commit `884d97862`
+> Last updated: 2026-09-08 · commit `ad9b7d2b1`
 
 How to build every component of Darkbloom from a fresh clone: the Go
 coordinator, the Rust prompt-contract sidecar, the Swift provider CLI (with its
@@ -484,3 +484,7 @@ requires `EIGENINFERENCE_DATABASE_URL`, runs store migrations, and exits without
 starting the server or seeding an admin key. Container execution must override
 the default MicroMDM entrypoint script; see the
 [deployment procedure](../operations/coordinator-deploy.md#optional-prepare-compatible-migrations-before-draining).
+
+The [startup measurement tool](../operations/coordinator-startup-measurement.md)
+requires Python 3.10+ and no third-party packages or build step. Its tests use
+local stub servers; its default observation mode sends only public GETs.

@@ -26,16 +26,24 @@ extension ProviderLoop {
         guard mtpUpgradeMonitorTask == nil else { return }
         mtpUpgradeMonitorTask = Task { [weak self] in
             var nextAttempt: [String: ContinuousClock.Instant] = [:]
+            var lastOutcome: [String: MTPIdleUpgrade.Outcome] = [:]
             while !Task.isCancelled {
                 guard let self else { return }
                 let candidates = await self.pendingMTPUpgradeModels()
                 nextAttempt = nextAttempt.filter { candidates.contains($0.key) }
                 for modelID in candidates where !Task.isCancelled {
                     if let next = nextAttempt[modelID], ContinuousClock.now < next { continue }
+                    if lastOutcome[modelID] == nil {
+                        await self.logMTPUpgrade("checking/downloading verified assistant; target remains available", modelID: modelID)
+                    }
                     let outcome = await MTPIdleUpgrade.run(
                         prepare: { try await self.prepareMTPUpgrade(modelID) },
                         commitIfIdle: { try await self.commitMTPUpgradeIfIdle($0) },
                         discard: { await self.discardMTPUpgrade($0) })
+                    if outcome != lastOutcome[modelID], outcome != .installed {
+                        await self.logMTPUpgrade("upgrade outcome=\(outcome); retaining current engine", modelID: modelID)
+                    }
+                    lastOutcome[modelID] = outcome
                     // A single monitor deduplicates GPU preparation. Fetches
                     // are independently bounded/deduplicated by the funnel.
                     nextAttempt[modelID] = .now.advanced(by:
@@ -45,6 +53,10 @@ extension ProviderLoop {
                 catch { return }
             }
         }
+    }
+
+    private func logMTPUpgrade(_ message: String, modelID: String) {
+        logger.info("mtp: model=\(modelID) \(message)")
     }
 
     private func pendingMTPUpgradeModels() -> [String] {
@@ -70,7 +82,7 @@ extension ProviderLoop {
         // Cache misses only schedule the funnel-owned fetch and return. The
         // current engine remains registered and accepts all ordinary traffic.
         let preparation = await specDecPreparation(
-            modelId: modelID, modelInfo: info, modelDirectory: directory)
+            modelId: modelID, modelInfo: info, modelDirectory: directory, logStatus: false)
         guard let artifact = preparation.artifact, !isLoadingAny,
             modelSlots[modelID]?.engineV2 === original.engineV2,
             pendingMTPUpgradeModels().contains(modelID)
@@ -81,7 +93,11 @@ extension ProviderLoop {
         guard let lease = await kvBudget.claimPendingLoad(
             requestID: "mtp-upgrade:\(modelID):\(UUID().uuidString)",
             weightBytes: artifact.residentBytes, minimumKVBytes: UInt64(grant))
-        else { return nil }
+        else {
+            logger.warning("mtp: model=\(modelID) assistant staging deferred: insufficient memory; retaining target engine")
+            throw MTPIdleUpgrade.PreparationError.insufficientMemory
+        }
+        let preparationStarted = ContinuousClock.now
         var prepared: EngineV2PreparedModel?
         var replacement: ProviderEngineBundle?
         do {
@@ -118,6 +134,7 @@ extension ProviderLoop {
                 pagedPoolBytes: await replacement.bridge.kvBackendPoolBytes(),
                 activationReserveBytes: resolvedActivationReserveBytes)
             else { throw CancellationError() }
+            logger.info("mtp: model=\(modelID) verified replacement prepared in \(preparationStarted.duration(to: .now)); waiting for natural idle")
             return StagedProviderMTPUpgrade(modelID: modelID, original: original,
                 replacement: replacement, sizing: sizing, lease: lease)
         } catch {
@@ -125,6 +142,7 @@ extension ProviderLoop {
             prepared?.assistant?.release()
             MLX.Memory.clearCache()
             await kvBudget.finishPendingLoad(lease)
+            logger.warning("mtp: model=\(modelID) optional preparation failed: \(error); retaining target engine")
             throw error
         }
     }
@@ -143,6 +161,7 @@ extension ProviderLoop {
             capacity.kvBytesReserved == 0 else { return false }
         await acquireResliceGate()
         defer { releaseResliceGate() }
+        try Task.checkCancellation()
         guard modelSlots[modelID]?.engineV2 === staged.original.engineV2,
             pendingMTPUpgradeModels().contains(modelID)
         else { throw CancellationError() }

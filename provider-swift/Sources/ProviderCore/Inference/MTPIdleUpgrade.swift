@@ -3,6 +3,8 @@ import Foundation
 /// Shared lifecycle for an optional replacement. Preparation never withdraws
 /// the serving engine. Only the caller's atomic idle commit can publish it.
 enum MTPIdleUpgrade {
+    enum PreparationError: Error { case insufficientMemory }
+
     enum Outcome: Equatable { case notReady, installed, deferred, cancelled, failed }
 
     static func run<Candidate: Sendable>(

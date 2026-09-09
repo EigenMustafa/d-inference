@@ -34,7 +34,7 @@ extension ProviderLoop {
         } else {
             logger.warning(
                 "mtp: catalog metadata prewarm failed or exceeded deadline; "
-                    + "startup continues target-only until a later full slot load")
+                    + "startup continues target-only while a verified assistant prepares for idle activation")
         }
     }
 
@@ -42,7 +42,8 @@ extension ProviderLoop {
         modelId: String,
         modelInfo: ModelInfo,
         modelDirectory: URL? = nil,
-        allowDownload: Bool = true
+        allowDownload: Bool = true,
+        logStatus: Bool = true
     ) async -> SpecDecPreparation {
         let inlineDeclaration = modelDirectory.map {
             SpecDecStore.inlineDeclarationProbe(directory: $0)
@@ -60,13 +61,15 @@ extension ProviderLoop {
                 inlineDeclaration: inlineDeclaration,
                 allowDownload: allowDownload,
                 environment: ProcessInfo.processInfo.environment))
-        let reason = prepared.status.reason?.rawValue ?? "ready"
-        logger.info(
-            "mtp: model=\(modelId) configured=\(prepared.status.configured) "
-                + "artifact_ready=\(prepared.artifact != nil) reason=\(reason) "
-                + "revision=\(prepared.status.revision ?? "none") "
-                + "source_revision=\(prepared.status.sourceRevision ?? "none") "
-                + "artifact_bytes=\(prepared.status.artifactBytes)")
+        if logStatus {
+            let reason = prepared.status.reason?.rawValue ?? "ready"
+            logger.info(
+                "mtp: model=\(modelId) configured=\(prepared.status.configured) "
+                    + "artifact_ready=\(prepared.artifact != nil) reason=\(reason) "
+                    + "revision=\(prepared.status.revision ?? "none") "
+                    + "source_revision=\(prepared.status.sourceRevision ?? "none") "
+                    + "artifact_bytes=\(prepared.status.artifactBytes)")
+        }
         return prepared
     }
 

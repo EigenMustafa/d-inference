@@ -66,7 +66,7 @@ extension SSDHybridCheckpointStore {
             else {
                 statsBox.update { $0.writeHostCapacityRefusals += 1 }
                 source.close()
-                settlement.settle(.writeFailed)
+                settlement.settle(.hostMemoryUnavailable)
                 completion([])
                 return
             }
@@ -111,7 +111,7 @@ extension SSDHybridCheckpointStore {
         completion: @escaping @Sendable ([Int]) -> Void
     ) -> WritePreparation {
         guard !isClosed else { return .refused(.cacheClosed) }
-        guard hasSafeRoot else { return .refused(.diskUnavailable) }
+        guard hasSafeRoot else { return .refused(.unsafeCacheRoot) }
         let manifest = source.manifest
         guard manifest.position >= config.minEffectiveTokens else { return .refused(.belowEffectiveTokenFloor) }
         guard manifest.position > 0, manifest.position % PrefixCachePolicy.blockSize == 0 else {
@@ -136,7 +136,7 @@ extension SSDHybridCheckpointStore {
         let short = Data(tag.prefix(16))
         let refusal: PrefixCacheDonationOutcome? = lock.withLock {
             guard !closed else { return .cacheClosed }
-            guard !destructiveChange else { return .writeFailed }
+            guard !destructiveChange else { return .cacheMaintenanceBusy }
             guard !writing.contains(short) else { return .alreadyQueued }
             guard writing.count < 2 else { return .writeQueueFull }
             writing.insert(short)
@@ -174,16 +174,18 @@ extension SSDHybridCheckpointStore {
         let short = Data(job.tag.prefix(16))
         let url = SSDBlockStore.fileURL(root: config.root, tag16Hex: short.hexString)
         guard !isClosed, !Task.isCancelled else { result.outcome = .cacheClosed; return }
-        guard hasSafeRoot else { result.outcome = .diskUnavailable; return }
-        guard epochMatches(job.epoch) else { return }
+        guard hasSafeRoot else { result.outcome = .unsafeCacheRoot; return }
+        guard epochMatches(job.epoch) else { result.outcome = .cacheEpochChanged; return }
         let metadata = envelope.metadata(
             tag: job.tag, identity: identity, createdAt: config.nowSeconds(), backendLayout: config.backendLayout)
+        var authenticatingExistingFile = false
         do {
             let alreadyDurable = index.contains(tag16: short)
             if alreadyDurable, job.authenticatedFile?.matches(url: url) == true {
                 // This submission already authenticated all bytes during its
                 // stage. Identity and epoch remain unchanged; no second read.
             } else if alreadyDurable {
+                authenticatingExistingFile = true
                 // A ready receipt must never rely on an advisory index entry.
                 // Reauthenticate changed timestamps too: another legitimate
                 // hit may have updated sliding recency since this stage.
@@ -211,7 +213,7 @@ extension SSDHybridCheckpointStore {
                 if let space = SSDPrefixCache.volumeSpace(at: config.root) {
                     let floor = SSDPrefixCachePolicy.lowDiskFloorBytes(volumeCapacityBytes: space.capacity)
                     guard space.free >= floor, space.free - floor >= envelope.plaintextBytes else {
-                        result.outcome = .diskUnavailable; return
+                        result.outcome = .diskSpaceInsufficient; return
                     }
                 }
                 let written = try SSDBlockStore.writeStreaming(
@@ -227,7 +229,7 @@ extension SSDHybridCheckpointStore {
                             tensorIndex: segment.tensor, byteOffset: segment.offset, maximumBytes: segment.bytes)
                     })
                 guard !isClosed else { result.outcome = .cacheClosed; return }
-                guard epochMatches(job.epoch) else { return }
+                guard epochMatches(job.epoch) else { result.outcome = .cacheEpochChanged; return }
                 index.insert(tag16: short, fileBytes: written, lastAccess: config.nowSeconds())
                 statsBox.update { $0.filesWritten += 1; $0.bytesWritten += written }
             }
@@ -236,10 +238,33 @@ extension SSDHybridCheckpointStore {
             if !isClosed, epochMatches(job.epoch), index.contains(tag16: short) {
                 result.positions = [job.source.manifest.position]
                 result.outcome = alreadyDurable ? .alreadyDurable : .donated
+            } else if isClosed {
+                result.outcome = .cacheClosed
+            } else if !epochMatches(job.epoch) {
+                result.outcome = .cacheEpochChanged
+            } else {
+                result.outcome = .cacheEntryEvicted
             }
         } catch {
-            if isClosed || Task.isCancelled { result.outcome = .cacheClosed }
-            if !(error is CancellationError), !isClosed { removeCorrupt(short) }
+            if isClosed {
+                result.outcome = .cacheClosed
+            } else if !epochMatches(job.epoch) {
+                result.outcome = .cacheEpochChanged
+            } else if authenticatingExistingFile && !(error is CancellationError) {
+                // An advertised file failed reauthentication. Revoke its
+                // evidence before removal, exactly as the lookup path does.
+                result.outcome = .existingCacheUnreadable
+                removeCorrupt(short)
+            } else if Task.isCancelled || error is CancellationError {
+                result.outcome = .cacheClosed
+            } else {
+                result.outcome = Self.freshWriteFailureOutcome(error)
+                // Atomic creation did not publish an index entry or receipt.
+                // Do not call removeCorrupt: there is no advertised file to
+                // revoke, and rotating the epoch would discard unrelated valid
+                // checkpoints and invalidate other queued donations. A later
+                // donation may retry after the transient condition clears.
+            }
         }
     }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — checkpoint write recovery
+
+- Preserve unrelated valid cache checkpoints when atomic creation of a new checkpoint fails; a later donation can retry without an unnecessary cache-epoch reset. Existing files that fail reauthentication still revoke their cache evidence.
+- Distinguish complete-checkpoint host-memory, epoch, maintenance, disk-space, unsafe-path, I/O and eviction outcomes in bounded provider/coordinator telemetry.
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

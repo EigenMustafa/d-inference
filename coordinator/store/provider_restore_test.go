@@ -123,3 +123,34 @@ func TestListProviderRecordsRejectsPartialScan(t *testing.T) {
 		t.Fatalf("partial success: rows=%v error=%v", rows, err)
 	}
 }
+
+func TestProviderAndReputationPublicationIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	s, err := NewPostgres(ctx, Config{DatabaseURL: newWithdrawableTestDatabase(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE provider_reputation ADD CONSTRAINT valid_restore_jobs CHECK(total_jobs >= 0)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := ProviderRecord{ID: "completed", SerialNumber: "serial", Hardware: json.RawMessage(`{}`), Models: json.RawMessage(`[]`), RegisteredAt: time.Now(), LastSeen: time.Now(), LifetimeTokensGenerated: 700}
+	if err := s.UpsertProviderWithReputation(ctx, rec, ReputationRecord{TotalJobs: -1}); err == nil {
+		t.Fatal("expected reputation failure")
+	}
+	if got, err := s.GetProviderForRestore(ctx, "serial", "", nil); err != nil || got != nil {
+		t.Fatalf("identity escaped failed reputation transaction: %+v %v", got, err)
+	}
+	cached := NewCached(s, DefaultCacheConfig())
+	if err := cached.UpsertProviderWithReputation(ctx, rec, ReputationRecord{TotalJobs: 12}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cached.GetProviderForRestore(ctx, "serial", "", nil)
+	if err != nil || got == nil || got.LifetimeTokensGenerated != 700 {
+		t.Fatalf("missing completed record: %+v %v", got, err)
+	}
+	rep, err := cached.GetReputation(ctx, got.ID)
+	if err != nil || rep.TotalJobs != 12 {
+		t.Fatalf("missing completed reputation: %+v %v", rep, err)
+	}
+}

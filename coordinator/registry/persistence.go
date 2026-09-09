@@ -9,6 +9,8 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/eigeninference/d-inference/coordinator/protocol"
@@ -23,9 +25,19 @@ func (r *Registry) SetStore(st store.Store) {
 // RestoreProviderState restores trust level and reputation from a stored record
 // onto a live provider. Called after a provider reconnects and is matched to
 // its stored state by serial number or SE key.
-func (r *Registry) RestoreProviderState(p *Provider, rec *store.ProviderRecord) {
+func (r *Registry) RestoreProviderState(p *Provider, rec *store.ProviderRecord) error {
 	if rec == nil {
-		return
+		return nil
+	}
+	var repRec *store.ReputationRecord
+	if r.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var err error
+		repRec, err = r.store.GetReputation(ctx, rec.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("restore reputation: %w", err)
+		}
 	}
 
 	p.mu.Lock()
@@ -107,20 +119,16 @@ func (r *Registry) RestoreProviderState(p *Provider, rec *store.ProviderRecord) 
 	p.Stats = providerRecordStats(rec.LifetimeStats, rec.LifetimeRequestsServed, rec.LifetimeTokensGenerated)
 	p.lastSessionStats = providerRecordStats(rec.LastSessionStats, rec.LastSessionRequestsServed, rec.LastSessionTokensGenerated)
 
-	// Restore reputation from store
-	if r.store != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		repRec, err := r.store.GetReputation(ctx, rec.ID)
-		if err == nil {
-			p.Reputation.TotalJobs = repRec.TotalJobs
-			p.Reputation.SuccessfulJobs = repRec.SuccessfulJobs
-			p.Reputation.FailedJobs = repRec.FailedJobs
-			p.Reputation.TotalUptime = time.Duration(repRec.TotalUptimeSeconds) * time.Second
-			p.Reputation.AvgResponseTime = time.Duration(repRec.AvgResponseTimeMs) * time.Millisecond
-			p.Reputation.ChallengesPassed = repRec.ChallengesPassed
-			p.Reputation.ChallengesFailed = repRec.ChallengesFailed
-		}
+	// Missing legacy reputation is allowed; other read failures returned before
+	// modifying counters or permitting durable identity publication.
+	if repRec != nil {
+		p.Reputation.TotalJobs = repRec.TotalJobs
+		p.Reputation.SuccessfulJobs = repRec.SuccessfulJobs
+		p.Reputation.FailedJobs = repRec.FailedJobs
+		p.Reputation.TotalUptime = time.Duration(repRec.TotalUptimeSeconds) * time.Second
+		p.Reputation.AvgResponseTime = time.Duration(repRec.AvgResponseTimeMs) * time.Millisecond
+		p.Reputation.ChallengesPassed = repRec.ChallengesPassed
+		p.Reputation.ChallengesFailed = repRec.ChallengesFailed
 	}
 
 	r.logger.Info("restored provider state from store",
@@ -130,6 +138,7 @@ func (r *Registry) RestoreProviderState(p *Provider, rec *store.ProviderRecord) 
 		"attested", rec.Attested,
 		"serial", rec.SerialNumber,
 	)
+	return nil
 }
 
 func providerRecordStats(raw json.RawMessage, requestsServed, tokensGenerated int64) protocol.HeartbeatStats {
@@ -267,9 +276,17 @@ func (r *Registry) persistProviderNow(p *Provider) {
 			RegisteredAt:               time.Now(),
 			LastSeen:                   time.Now(),
 		}
+		completed := !p.stateRestorePending
+		rep := providerReputationRecordLocked(p)
 		p.mu.Unlock()
 
-		if err := r.store.UpsertProvider(ctx, rec); err != nil {
+		var err error
+		if completed {
+			err = r.store.UpsertProviderWithReputation(ctx, rec, rep)
+		} else {
+			err = r.store.UpsertProvider(ctx, rec)
+		}
+		if err != nil {
 			r.logger.Warn("failed to persist provider", "provider_id", p.ID, "error", err)
 		}
 
@@ -287,33 +304,40 @@ func (r *Registry) persistReputation(p *Provider) {
 	if r.store == nil {
 		return
 	}
-	saferun.Go(r.logger, "registry.persistReputation", func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+	saferun.Go(r.logger, "registry.persistReputation", func() { r.persistReputationNow(p) })
+}
 
-		p.mu.Lock()
-		rep := store.ReputationRecord{
-			TotalJobs:          p.Reputation.TotalJobs,
-			SuccessfulJobs:     p.Reputation.SuccessfulJobs,
-			FailedJobs:         p.Reputation.FailedJobs,
-			TotalUptimeSeconds: int64(p.Reputation.TotalUptime / time.Second),
-			AvgResponseTimeMs:  int64(p.Reputation.AvgResponseTime / time.Millisecond),
-			ChallengesPassed:   p.Reputation.ChallengesPassed,
-			ChallengesFailed:   p.Reputation.ChallengesFailed,
-		}
+func (r *Registry) persistReputationNow(p *Provider) {
+	p.persistMu.Lock()
+	defer p.persistMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	p.mu.Lock()
+	if p.stateRestorePending {
 		p.mu.Unlock()
+		return
+	}
+	rep := providerReputationRecordLocked(p)
+	p.mu.Unlock()
 
-		if err := r.store.UpsertReputation(ctx, p.ID, rep); err != nil {
-			r.logger.Warn("failed to persist reputation", "provider_id", p.ID, "error", err)
-		}
-	})
+	if err := r.store.UpsertReputation(ctx, p.ID, rep); err != nil {
+		r.logger.Warn("failed to persist reputation", "provider_id", p.ID, "error", err)
+	}
 }
 
 // CompleteProviderStateRestore permits future durable identity publication only
-// after lookup and counter/reputation restoration have succeeded (or no history
-// exists). It does not grant attestation, MDA or any routing trust.
+// after provider-record lookup and RestoreProviderState finish (or no history
+// exists). Missing legacy reputation is allowed; read failures leave the state
+// pending. This does not grant attestation, MDA or any routing trust.
 func (p *Provider) CompleteProviderStateRestore() {
 	p.mu.Lock()
 	p.stateRestorePending = false
 	p.mu.Unlock()
+}
+
+func providerReputationRecordLocked(p *Provider) store.ReputationRecord {
+	return store.ReputationRecord{TotalJobs: p.Reputation.TotalJobs, SuccessfulJobs: p.Reputation.SuccessfulJobs, FailedJobs: p.Reputation.FailedJobs,
+		TotalUptimeSeconds: int64(p.Reputation.TotalUptime / time.Second), AvgResponseTimeMs: int64(p.Reputation.AvgResponseTime / time.Millisecond),
+		ChallengesPassed: p.Reputation.ChallengesPassed, ChallengesFailed: p.Reputation.ChallengesFailed}
 }

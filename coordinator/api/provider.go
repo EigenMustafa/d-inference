@@ -3211,8 +3211,8 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 	)
 
 	// Resolve only this freshly verified identity, rather than loading all historical
-	// sessions before startup. Exclude this new session because Register persists it
-	// asynchronously and may already have observed the attestation fields.
+	// sessions before startup. Exclude every live session and keep incomplete
+	// registrations' identities unpublished across asynchronous persistence.
 	s.restorePersistedProviderState(provider, result.SerialNumber, result.PublicKey)
 
 	// Independently recover the newest non-empty durable MDA chain. A newer

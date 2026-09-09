@@ -31,7 +31,10 @@ func (s *Server) restorePersistedProviderState(p *registry.Provider, serial, seK
 			continue
 		}
 		if rec != nil {
-			s.registry.RestoreProviderState(p, rec)
+			if err := s.registry.RestoreProviderState(p, rec); err != nil {
+				s.logger.Warn("provider reputation restore failed", "provider_id", p.ID, "error", err)
+				return
+			}
 		}
 		p.CompleteProviderStateRestore()
 		return

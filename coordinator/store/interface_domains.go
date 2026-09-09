@@ -645,6 +645,10 @@ type ProviderStore interface {
 	// UpsertProvider creates or updates a provider record.
 	UpsertProvider(ctx context.Context, p ProviderRecord) error
 
+	// UpsertProviderWithReputation atomically publishes a completed provider record
+	// with the reputation that the next reconnect will read.
+	UpsertProviderWithReputation(ctx context.Context, p ProviderRecord, rep ReputationRecord) error
+
 	// GetProviderRecord returns a provider record by ID.
 	GetProviderRecord(ctx context.Context, id string) (*ProviderRecord, error)
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func seededLegacyEarningsStore(t *testing.T) *PostgresStore {
@@ -200,5 +201,23 @@ func TestEarningsSummaryBackfillAbortedPlanNeverSilentlyReplans(t *testing.T) {
 	var done bool
 	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id=$1)`, earningsSummaryMigrationID).Scan(&done); err != nil || done {
 		t.Fatalf("incorrect completion: %v %v", done, err)
+	}
+}
+
+func TestEarningsSummaryBackfillUsesOnePoolConnection(t *testing.T) {
+	s := seededLegacyEarningsStore(t)
+	cfg := s.pool.Config()
+	cfg.MaxConns = 1
+	cfg.MinConns = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	single := &PostgresStore{pool: pool}
+	if applied, err := single.applyEarningsSummaryMigration(ctx); err != nil || !applied {
+		t.Fatalf("single-connection migration: %v %v", applied, err)
 	}
 }

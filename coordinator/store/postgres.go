@@ -4311,7 +4311,11 @@ func (s *PostgresStore) UpsertProvider(ctx context.Context, p ProviderRecord) er
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := s.pool.Exec(ctx,
+	return upsertProviderRecord(ctx, s.pool, p)
+}
+
+func upsertProviderRecord(ctx context.Context, db providerRecordDB, p ProviderRecord) error {
+	_, err := db.Exec(ctx,
 		`INSERT INTO providers (
 			id, hardware, models, backend, location, trust_level, attested,
 			attestation_result, se_public_key, serial_number,
@@ -4711,7 +4715,11 @@ func (s *PostgresStore) UpsertReputation(ctx context.Context, providerID string,
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := s.pool.Exec(ctx,
+	return upsertReputationRecord(ctx, s.pool, providerID, rep)
+}
+
+func upsertReputationRecord(ctx context.Context, db providerRecordDB, providerID string, rep ReputationRecord) error {
+	_, err := db.Exec(ctx,
 		`INSERT INTO provider_reputation (
 			provider_id, total_jobs, successful_jobs, failed_jobs,
 			total_uptime_seconds, avg_response_time_ms,
@@ -4747,8 +4755,11 @@ func (s *PostgresStore) GetReputation(ctx context.Context, providerID string) (*
 		&rep.TotalUptimeSeconds, &rep.AvgResponseTimeMs,
 		&rep.ChallengesPassed, &rep.ChallengesFailed,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("store: reputation not found: %w", ErrNotFound)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("store: reputation not found: %w", err)
+		return nil, fmt.Errorf("store: read reputation: %w", err)
 	}
 	return &rep, nil
 }

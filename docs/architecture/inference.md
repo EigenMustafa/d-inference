@@ -185,8 +185,13 @@ M3/M4/M5 and `4` on M1/M2/unknown, lowered only by
 Gemma uses bounded rectangular target verification: one target traversal scores
 its seed and draft columns, while ordered attention and speculative transactions
 preserve causal visibility and discard rejected suffixes. The depth controller
-compares finalized step cost with accepted-token benefit, selects ordinary decode
-when drafting is unprofitable, and periodically probes again. Wider evaluation
+compares ordinary decode's chained commit intervals with actual committed output
+per MTP interval. Adaptive stateless Gemma pairs seed time with seed output,
+excludes the first positive-shape compilation from its steady estimate while
+retaining that work in telemetry, and refreshes learning when the request cohort
+changes. It selects ordinary decode when that is faster and periodically probes
+again (`CBv2MTPCommittedGoodputClock`, `CBv2MTPDepthController` in
+`libs/mlx-swift-lm/Libraries/MLXLMCommon/ContinuousBatchingV2/MTP/`). Wider evaluation
 can change floating-point rounding and generated wording; acceptance remains
 target-authoritative. Supported sampling uses the target distribution and an
 output-indexed RNG stream. Penalties, bias, logprobs, stop strings and token

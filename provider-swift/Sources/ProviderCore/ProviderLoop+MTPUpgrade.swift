@@ -61,7 +61,7 @@ extension ProviderLoop {
         }.sorted()
     }
 
-    private func prepareMTPUpgrade(_ modelID: String) async throws -> StagedProviderMTPUpgrade? {
+    func prepareMTPUpgrade(_ modelID: String) async throws -> StagedProviderMTPUpgrade? {
         guard pendingMTPUpgradeModels().contains(modelID), !isLoadingAny,
             let original = modelSlots[modelID],
             let info = advertisedModels[modelID],
@@ -129,7 +129,7 @@ extension ProviderLoop {
         }
     }
 
-    private func commitMTPUpgradeIfIdle(_ staged: StagedProviderMTPUpgrade) async throws -> Bool {
+    func commitMTPUpgradeIfIdle(_ staged: StagedProviderMTPUpgrade) async throws -> Bool {
         let modelID = staged.modelID
         try Task.checkCancellation()
         guard modelSlots[modelID]?.engineV2 === staged.original.engineV2,
@@ -173,7 +173,7 @@ extension ProviderLoop {
         return true
     }
 
-    private func discardMTPUpgrade(_ staged: StagedProviderMTPUpgrade) async {
+    func discardMTPUpgrade(_ staged: StagedProviderMTPUpgrade) async {
         await staged.replacement.bridge.shutdown()
         staged.replacement.releaseAssistant()
         MLX.Memory.clearCache()

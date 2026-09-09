@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — Gemma QAT SSD prefix caching
+
+- Enable encrypted SSD prefix caching by default for `gemma-4-26b-qat-4bit` using complete paged historical-attention checkpoints. Preserve the global cache disable, identity and tenant checks, contiguous cold fallback, and disabled automatic MTP. Other Gemma artifacts and GPT-OSS remain opt-in; production cache-routing activation remains separate.
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

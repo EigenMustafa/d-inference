@@ -31,9 +31,9 @@ struct PrefixCachePolicyTests {
 
     @Test(arguments: [
         "qwen3.5-35b-a3b", "qwen3.6-35b-a3b-vl-mtp-mxfp8",
-        "EigenLabs/Qwen3.8-27B-4bit-mtp",
+        "EigenLabs/Qwen3.8-27B-4bit-mtp", "gemma-4-26b-qat-4bit",
     ])
-    func qwenDefaultSSD(modelID: String) {
+    func releaseArtifactsDefaultSSD(modelID: String) {
         for value in [nil, "", "   "] as [String?] {
             let environment = value.map { [PrefixCachePolicy.environmentFlag: $0] } ?? [:]
             #expect(PrefixCachePolicy.isEnabled(modelId: modelID, environment: environment))
@@ -46,7 +46,8 @@ struct PrefixCachePolicyTests {
     }
 
     @Test(arguments: [
-        "gpt-oss-20b", "gemma-4-26b-qat-4bit", "gemma-4-26b", "gemma-4-26b-8bit", "unknown", "",
+        "gpt-oss-20b", "gemma-4-26b", "gemma-4-26b-8bit", "unknown", "",
+        "gemma-4-26b-qat", "GEMMA-4-26B-QAT-4BIT", "gemma-4-26b-qat-4bit-other",
         "qwen3.5-35b-a3b-other", "QWEN3.5-35B-A3B", " qwen3.5-35b-a3b",
         "qwen3.6-35b-a3b", "EigenLabs/Qwen3.8-27B-4bit",
     ])

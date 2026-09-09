@@ -1,6 +1,6 @@
 # Storage
 
-> Last updated: 2026-09-07 · commit `efcde6334`
+> Last updated: 2026-09-08 · commit `884d97862`
 
 What the coordinator persists, through which interface, in which backend, and
 how the schema reaches a fresh database; then what a provider keeps on its own
@@ -82,11 +82,16 @@ the only connection-level knob; there is no separate host/user/password set.
 
 ### Migrations run inside the process, at every boot
 
-There is no migration tool and no versioned migration directory for the
+`coordinator --migrate-only` applies the same migrations and exits before admin
+key seeding, listeners, or background workers. It requires a PostgreSQL URL;
+there is no memory-store fallback or schema-skip mode. Normal startup still
+checks every migration. There is no versioned migration directory for the
 schema. `PostgresStore.migrate` (`coordinator/store/postgres.go`) executes an
 ordered slice of idempotent statements — `CREATE TABLE IF NOT EXISTS`,
 `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `DROP TABLE IF EXISTS`
-for retired tables — on every start, then three post-loop steps:
+for retired tables — on every start, followed by:
+`migrateEarningsSummary` (`postgres_earnings_summary_migration.go`),
+`ensureProviderRestoreIndexes` (`postgres_startup.go`),
 `migrateUsageTotals` (`postgres_usage_totals_migration.go`),
 `migrateWithdrawableBalance` (`postgres_withdrawable_migration.go`) and
 `ensureProviderEarningsJobIndex`. One-shot *data* migrations are gated by a row
@@ -100,6 +105,34 @@ table and kept the coordinator from binding its port) and
 behind a long query's lock). `coordinator/deploy/start.sh` does not touch the
 database; it only prepares the persistent disk and MicroMDM before `exec
 coordinator`.
+
+The earnings-summary backfill claims `backfill_earnings_summary_v1` and fills
+missing account/provider summary keys in one transaction. Existing summaries
+are preserved; a rollback removes both the inserts and marker. Later boots read
+the marker without scanning `provider_earnings`. Both `CreditProviderAccount`
+and `RecordProviderEarning` maintain new summaries from the earning insert's
+`RETURNING` rows, so duplicate non-empty job IDs never increment counters twice.
+The record-only method does not credit balances or create ledger entries.
+
+Postgres startup logs connection time and individual schema statement durations
+as bounded phase labels, plus named backfills/index phases. Logs omit SQL and
+parameters. The first boot that installs the new marker still performs the
+historical aggregation; preparing migrations before the drain moves that work
+out of the cutover window. Concurrent index creation can still wait for old
+transactions. See the [deployment procedure](../operations/coordinator-deploy.md)
+for the approval and compatibility boundary.
+
+Provider history is recovered on demand after successful live SE attestation,
+using `GetProviderForRestore` with the verified serial first, then SE key if
+no serial record exists. Ordered partial indexes on each identity plus
+`last_seen DESC, id DESC` select the newest prior session. The current session
+is excluded because registration persists asynchronously. `NewServer` does
+not scan historical providers. The existing `RestoreProviderState` trust cap
+and independent newest-nonempty-MDA-chain re-verification remain in force.
+Store errors are logged and do not grant hardware trust. Reputation is still
+loaded by the selected historical record ID. `ListProviderRecords` remains an
+explicit administrative store operation and now returns scan/iteration errors
+instead of a partial-success list.
 
 ```mermaid
 flowchart LR
@@ -186,7 +219,7 @@ KV blocks under a per-model key, not tokens.
    process serves traffic only after the whole slice succeeds
    (`coordinator/store/postgres.go`).
 3. **One-shot data migrations run at most once.** They test and insert their
-   marker in `schema_migrations` inside the same statement
+   marker in `schema_migrations` inside the same transaction
    (`coordinator/store/postgres.go`).
 4. **Boot never holds a long lock on a hot table.** The
    `provider_earnings(job_id)` unique index is built `CONCURRENTLY`, only after

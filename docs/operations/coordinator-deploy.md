@@ -1,6 +1,6 @@
 # Deploy the coordinator (production)
 
-> Last updated: 2026-09-06 · commit `23e6f986f`
+> Last updated: 2026-09-08 · commit `884d97862`
 
 Runbook for swapping the production coordinator container on the GCE VM
 `darkbloom-coordinator` to a Cloud-Build image of a reviewed `master` commit,
@@ -139,6 +139,35 @@ curl -fsS localhost:8080/v1/cache/status | jq -S \
 sudo sh -c 'umask 077; awk -F= '\''$1 ~ /^EIGENINFERENCE_CACHE_ROUTING_/ || $1 == "EIGENINFERENCE_CACHE_MASTER_KEY"'\'' \
   /etc/d-inference/env | LC_ALL=C sort | sha256sum | cut -d" " -f1 > /tmp/darkbloom-cache-env.before.sha256'
 ```
+
+### Optional: prepare compatible migrations before draining
+
+After reviewing the exact candidate's schema changes, a human-approved operator
+can run its database-only command while the current coordinator serves. This is
+a production database mutation and needs approval for that operation. Only
+backward-compatible migrations belong before cutover; `--migrate-only` executes
+all normal migrations and does not establish compatibility automatically.
+
+```bash
+sudo docker run --rm --network host --env-file /etc/d-inference/env \
+  --entrypoint /usr/local/bin/coordinator \
+  "${CANDIDATE_IMAGE%:*}@${CANDIDATE_DIGEST}" --migrate-only
+```
+
+The executable override is mandatory: the image's default `start.sh` starts
+MicroMDM and touches persistent MDM state. The database-only container needs no
+userdata mount, publishes no port, seeds no admin key, starts no workers and
+exits after migration success (with a 15-minute upper bound). Do not start a
+second ordinary coordinator container. Rerun the blocked-query/lock checks and
+verify current serving health after preparation; success is not approval to
+swap.
+
+The earnings-summary migration performs its historical aggregation once, then
+records a transactional marker; subsequent startup avoids that scan. New
+provider-recovery indexes are built concurrently and checked for validity. An
+interrupted build that leaves an invalid index fails closed with its index name;
+repair it under a separate approved operation. Ordinary startup still applies
+schema checks, and this preparation does not prove a five-second handoff.
 
 ### 3. Refresh the env file and capture rollback inputs
 

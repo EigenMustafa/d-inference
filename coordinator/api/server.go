@@ -389,12 +389,6 @@ type Server struct {
 	// Set from CORS_ORIGIN env var. Empty defaults to the production console domain.
 	corsOrigin string
 
-	// storedProviders is a lookup table of persisted provider records, indexed
-	// by serial number and SE public key. When a provider reconnects after a
-	// coordinator restart, this table is checked to restore trust/reputation.
-	// Populated once at startup from the store.
-	storedProviders map[string]*store.ProviderRecord
-
 	// geoResolver resolves provider and consumer request locations from IP
 	// addresses or trusted reverse-proxy headers. Nil when GeoIP is not configured.
 	geoResolver providerGeoResolver
@@ -879,9 +873,6 @@ func NewServer(reg *registry.Registry, st store.Store, cfg ServerConfig, logger 
 	s.registerDefaultGauges()
 	s.routes()
 
-	// Load stored provider records into a lookup table for matching
-	// reconnecting providers to their persisted state.
-	s.storedProviders = reg.LoadStoredProviders()
 	// Apply server configuration from ServerConfig.
 	// TODO(auth): storing admin emails in the server struct is an antipattern.
 	// Move admin verification to an external auth service (Privy or IDP) so that

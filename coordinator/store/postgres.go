@@ -85,7 +85,10 @@ func newPostgresWithPoolConfig(ctx context.Context, scfg Config, tune func(*pgxp
 	}
 
 	// Verify connectivity.
-	if err := pool.Ping(ctx); err != nil {
+	pingStarted := time.Now()
+	pingErr := pool.Ping(ctx)
+	logStartupMigration("connect", pingStarted, pingErr)
+	if err := pingErr; err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("store: ping postgres: %w", err)
 	}
@@ -673,24 +676,6 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			PRIMARY KEY (key, key_type)
 		)`,
 
-		// Backfill earnings_summary from existing provider_earnings rows.
-		// The INSERT ... ON CONFLICT DO NOTHING ensures this only runs once per key.
-		`INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-		 SELECT account_id, 'account', COUNT(*), COALESCE(SUM(amount_micro_usd), 0),
-		        COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), NOW()
-		 FROM provider_earnings
-		 WHERE account_id != ''
-		 GROUP BY account_id
-		 ON CONFLICT (key, key_type) DO NOTHING`,
-
-		`INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-		 SELECT provider_key, 'provider', COUNT(*), COALESCE(SUM(amount_micro_usd), 0),
-		        COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), NOW()
-		 FROM provider_earnings
-		 WHERE provider_key != ''
-		 GROUP BY provider_key
-		 ON CONFLICT (key, key_type) DO NOTHING`,
-
 		// Provider payouts — wallet-based payout history for unlinked providers
 		`CREATE TABLE IF NOT EXISTS provider_payouts (
 			id BIGSERIAL PRIMARY KEY,
@@ -1187,10 +1172,20 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		fleetSnapshotsProviderIndexDDL,
 	}
 
-	for _, m := range migrations {
-		if _, err := s.pool.Exec(ctx, m); err != nil {
-			return fmt.Errorf("migration failed: %w", err)
+	for i, m := range migrations {
+		started := time.Now()
+		_, err := s.pool.Exec(ctx, m)
+		logStartupMigration(fmt.Sprintf("schema_statement_%03d", i), started, err)
+		if err != nil {
+			return fmt.Errorf("migration statement %d failed: %w", i, err)
 		}
+	}
+
+	if err := s.migrateEarningsSummary(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProviderRestoreIndexes(ctx); err != nil {
+		return err
 	}
 
 	if err := s.migrateUsageTotals(ctx); err != nil {
@@ -3948,9 +3943,23 @@ func (s *PostgresStore) RecordProviderEarning(earning *ProviderEarning) error {
 	}
 
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO provider_earnings (account_id, provider_id, provider_key, job_id, model, amount_micro_usd, prompt_tokens, completion_tokens, created_at)
+		`WITH earning AS (INSERT INTO provider_earnings (account_id, provider_id, provider_key, job_id, model, amount_micro_usd, prompt_tokens, completion_tokens, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 ON CONFLICT (job_id) WHERE job_id <> '' DO NOTHING`,
+		 ON CONFLICT (job_id) WHERE job_id <> '' DO NOTHING
+		 RETURNING account_id, provider_key, amount_micro_usd, prompt_tokens, completion_tokens
+		), summaries AS (
+		 SELECT account_id AS key, 'account' AS key_type, amount_micro_usd, prompt_tokens, completion_tokens FROM earning WHERE account_id <> ''
+		 UNION ALL
+		 SELECT provider_key, 'provider', amount_micro_usd, prompt_tokens, completion_tokens FROM earning WHERE provider_key <> ''
+		)
+		INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
+		SELECT key, key_type, 1, amount_micro_usd, prompt_tokens, completion_tokens, NOW() FROM summaries
+		ON CONFLICT (key, key_type) DO UPDATE SET
+		 total_count = earnings_summary.total_count + 1,
+		 total_micro_usd = earnings_summary.total_micro_usd + EXCLUDED.total_micro_usd,
+		 total_prompt_tokens = earnings_summary.total_prompt_tokens + EXCLUDED.total_prompt_tokens,
+		 total_completion_tokens = earnings_summary.total_completion_tokens + EXCLUDED.total_completion_tokens,
+		 updated_at = NOW()`,
 		earning.AccountID, earning.ProviderID, earning.ProviderKey, earning.JobID,
 		earning.Model, earning.AmountMicroUSD, earning.PromptTokens, earning.CompletionTokens,
 		createdAt,
@@ -4481,10 +4490,13 @@ func (s *PostgresStore) ListProviderRecords(ctx context.Context) ([]ProviderReco
 			&p.LifetimeStats, &p.LastSessionStats,
 			&p.RegisteredAt, &p.LastSeen, &p.PublicKey,
 		); err != nil {
-			continue
+			return nil, fmt.Errorf("store: scan provider: %w", err)
 		}
 		p.Location = unmarshalProviderLocation(locationRaw)
 		records = append(records, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate providers: %w", err)
 	}
 	if records == nil {
 		return []ProviderRecord{}, nil

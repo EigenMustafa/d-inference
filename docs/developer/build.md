@@ -1,6 +1,6 @@
 # Build
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-08 · commit `884d97862`
 
 How to build every component of Darkbloom from a fresh clone: the Go
 coordinator, the Rust prompt-contract sidecar, the Swift provider CLI (with its
@@ -476,3 +476,11 @@ ls console-ui/.next
 - [../operations/provider-release.md](../operations/provider-release.md) — provider release runbook.
 - [`../operations/coordinator-deploy.md`](../operations/coordinator-deploy.md) — container build and deploy on GCP.
 - [`../architecture/components/mlx-swift.md`](../architecture/components/mlx-swift.md) — why the metallib must match the MLX source.
+
+## Database-only coordinator command
+
+The normal coordinator build also supports `coordinator --migrate-only`. It
+requires `EIGENINFERENCE_DATABASE_URL`, runs store migrations, and exits without
+starting the server or seeding an admin key. Container execution must override
+the default MicroMDM entrypoint script; see the
+[deployment procedure](../operations/coordinator-deploy.md#optional-prepare-compatible-migrations-before-draining).

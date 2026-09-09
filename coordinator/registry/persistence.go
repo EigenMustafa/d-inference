@@ -1,7 +1,7 @@
 package registry
 
 // Provider state persistence: the bridge between the in-memory registry and the
-// durable store. Loads stored provider records + reputation at startup, restores
+// durable store. Looks up durable provider records at reconnect, restores
 // them onto reconnecting live providers (never resurrecting hardware trust or
 // the MDA proof — that is re-earned live), and writes provider + reputation
 // state back (unconditionally for critical changes, throttled for heartbeats).
@@ -18,40 +18,6 @@ import (
 
 func (r *Registry) SetStore(st store.Store) {
 	r.store = st
-}
-
-// LoadStoredProviders loads provider records and reputation from the store
-// on startup. This pre-populates a lookup table so that reconnecting providers
-// can have their trust level and reputation restored. Providers are NOT added
-// to the active registry (they need to reconnect via WebSocket first).
-func (r *Registry) LoadStoredProviders() map[string]*store.ProviderRecord {
-	if r.store == nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	records, err := r.store.ListProviderRecords(ctx)
-	if err != nil {
-		r.logger.Warn("failed to load stored providers", "error", err)
-		return nil
-	}
-
-	lookup := make(map[string]*store.ProviderRecord, len(records))
-	for i := range records {
-		rec := records[i]
-		// Index by serial number for matching reconnecting providers
-		if rec.SerialNumber != "" {
-			lookup[rec.SerialNumber] = &rec
-		}
-		// Also index by SE public key
-		if rec.SEPublicKey != "" {
-			lookup["sekey:"+rec.SEPublicKey] = &rec
-		}
-	}
-
-	r.logger.Info("loaded stored provider records", "count", len(records))
-	return lookup
 }
 
 // RestoreProviderState restores trust level and reputation from a stored record

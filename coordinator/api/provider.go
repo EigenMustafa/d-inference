@@ -3210,35 +3210,14 @@ func (s *Server) verifyProviderAttestation(providerID string, provider *registry
 		"trust_level", registry.TrustSelfSigned,
 	)
 
-	// Restore persisted state: if this provider was previously known (by serial
-	// number or SE key), restore trust level, reputation, and account linkage.
-	// Fresh attestation verification still runs (above), but stored reputation
-	// is preserved so routing quality is maintained across coordinator restarts.
-	if s.storedProviders != nil {
-		var storedRec *store.ProviderRecord
-		if result.SerialNumber != "" {
-			storedRec = s.storedProviders[result.SerialNumber]
-		}
-		if storedRec == nil && result.PublicKey != "" {
-			storedRec = s.storedProviders["sekey:"+result.PublicKey]
-		}
-		if storedRec != nil {
-			s.registry.RestoreProviderState(provider, storedRec)
-			s.logger.Info("restored persisted provider state",
-				"provider_id", providerID,
-				"stored_serial", storedRec.SerialNumber,
-				"stored_trust", storedRec.TrustLevel,
-			)
-		}
-	}
+	// Resolve only this freshly verified identity, rather than loading all historical
+	// sessions before startup. Exclude this new session because Register persists it
+	// asynchronously and may already have observed the attestation fields.
+	s.restorePersistedProviderState(provider, result.SerialNumber, result.PublicKey)
 
-	// Stage the durable Apple MDA cert chain from a LIVE store read. storedProviders
-	// above is a one-time startup snapshot — empty for the coordinator's whole life
-	// under the in-memory store used in prod — so it cannot surface a chain earned
-	// during this coordinator's lifetime. The store record survives provider
-	// disconnect, so a serial lookup recovers a chain a previous connection earned,
-	// letting attachCachedMDAProof reuse it (re-verified + SE-key-bound) instead of
-	// forcing a fresh, Apple-rate-limited DevicePropertiesAttestation round-trip.
+	// Independently recover the newest non-empty durable MDA chain. A newer
+	// empty record must not shadow a chain earned by an earlier session. The
+	// hardware-grant path still re-verifies the certificate and SE-key binding.
 	s.stageDurableMDAChain(provider, result.SerialNumber)
 
 	// Deduplicate: if another provider connection exists from the same physical
@@ -3481,10 +3460,8 @@ func (s *Server) ApplyLateSecurityInfo(
 
 // stageDurableMDAChain recovers a previously-earned Apple MDA cert chain from the
 // store (by serial) and stages it on the provider as a reuse candidate for this
-// reconnect. The store record survives provider disconnect, so this works under
-// the in-memory store used in prod — where the startup storedProviders snapshot is
-// empty — as well as a durable store. Best-effort: a missing record / chain or a
-// read error simply stages nothing, and a fresh attestation is requested.
+// reconnect. A missing record / chain or a read error stages nothing, and a
+// fresh attestation is requested. This read is independent of counter recovery.
 func (s *Server) stageDurableMDAChain(provider *registry.Provider, serial string) {
 	if s.store == nil || serial == "" {
 		return

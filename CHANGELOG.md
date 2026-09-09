@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — coordinator startup
+
+- Recover provider history on reconnect through indexed identity lookups instead of scanning every historical session before serving. Select the newest prior session and preserve live attestation requirements.
+- Run the earnings-summary history backfill once transactionally; maintain summaries on record-only inserts as well as account settlement. Add startup phase timings and a database-only migration command for approved preparation before cutover.
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

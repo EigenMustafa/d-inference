@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-08 · commit `884d97862`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -101,6 +101,25 @@ file created during a test must be removed after shutdown.
 ```bash
 go test ./e2e/testbed -run '^TestCleanup' -count=1
 ```
+
+#### Coordinator startup and reconnect recovery
+
+Use a disposable local PostgreSQL database for the startup regressions. Store
+tests truncate tables and create/drop isolated databases; never point
+`DATABASE_URL` at a shared or production database.
+
+```bash
+cd coordinator
+# DATABASE_URL must name a throwaway local database.
+go test -p 1 ./store ./cmd/coordinator -run 'Test(EarningsSummary|RecordProviderEarningMaintains|ProviderRestore|PostgresRestore|Maintenance)' -count=1
+go test -race ./api ./registry -run 'Test(ProviderRestore|RestoreProviderState|AttachCachedMDAProof|StageDurableMDAChain)' -count=1
+```
+
+These check one-time aggregation and rollback, a repeated boot while earnings
+history is exclusively locked, newest-prior identity lookup through CachedStore,
+index applicability, MDA trust caps, and a migration-only subprocess that exits
+without HTTP startup or admin-key seeding. They do not measure production startup
+latency or validate an overlapping coordinator handoff.
 
 ### 3. Prompt-contract sidecar (Rust)
 

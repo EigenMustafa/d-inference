@@ -96,6 +96,43 @@ struct SSDCheckpointWriteRecoveryTests {
             CBv2CompleteCheckpointError.invalidManifest) == .writeFailed)
     }
 
+    @Test("atomic-write POSIX wrappers retain disk-full errno after cleanup changes it")
+    func wrappedDiskFullClassification() {
+        let previousErrno = errno
+        defer { errno = previousErrno }
+        // Construct the path before simulating the syscall failure: Foundation
+        // URL initialization itself can change errno, unlike the existing URL
+        // variables passed by the production openat/renameat call sites.
+        let url = URL(fileURLWithPath: "/private/cache/test.dbk3")
+        for operation in ["openat temp", "renameat"] {
+            for code in [Int32(ENOSPC), Int32(EIO)] {
+                errno = code
+                let wrapped = SSDNoFollowIO.posixError(operation, url: url)
+                errno = EINVAL
+                #expect(SSDHybridCheckpointStore.freshWriteFailureOutcome(wrapped)
+                    == (code == ENOSPC ? .diskSpaceInsufficient : .writeIOFailed))
+            }
+        }
+    }
+
+    @Test("evicting the written endpoint reports eviction before its epoch change")
+    func donationEvictedByBudget() async throws {
+        let f = try SSDHybridCheckpointTestFixture()
+        defer { f.remove() }
+        let telemetry = PrefixCacheDonationTelemetry()
+        let store = try f.makeStore(diskBudgetBytes: { 0 }, donationRecorder: telemetry)
+        let epoch = store.config.epochStore?.current
+        #expect(try await f.donate(store).isEmpty)
+        #expect(store.stats().filesWritten == 1)
+        #expect(store.stats().evictions == 1)
+        #expect(store.index.count == 0)
+        #expect(store.config.epochStore?.current != epoch)
+        #expect(count(.cacheEntryEvicted, in: telemetry) == 1)
+        #expect(count(.cacheEpochChanged, in: telemetry) == 0)
+        #expect(telemetry.snapshot().reduce(0) { $0 + $1.count } == 1)
+        await store.closeAndWait()
+    }
+
     private func count(_ outcome: PrefixCacheDonationOutcome, in telemetry: PrefixCacheDonationTelemetry) -> UInt64 {
         telemetry.snapshot().first { $0.outcome == outcome }?.count ?? 0
     }

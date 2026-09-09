@@ -240,10 +240,16 @@ extension SSDHybridCheckpointStore {
                 result.outcome = alreadyDurable ? .alreadyDurable : .donated
             } else if isClosed {
                 result.outcome = .cacheClosed
+            } else if !index.contains(tag16: short) {
+                // Removing this endpoint also rotates its epoch. Report the
+                // concrete removal before its resulting epoch invalidation.
+                result.outcome = .cacheEntryEvicted
             } else if !epochMatches(job.epoch) {
                 result.outcome = .cacheEpochChanged
             } else {
-                result.outcome = .cacheEntryEvicted
+                // A concurrent state transition may have settled between the
+                // reads above. Never manufacture READY from the failed gate.
+                result.outcome = .writeFailed
             }
         } catch {
             if isClosed {

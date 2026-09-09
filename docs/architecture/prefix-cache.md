@@ -1,6 +1,6 @@
 # KV cache layouts and prefix caching
 
-> Last updated: 2026-09-08 · commit `884d97862`
+> Last updated: 2026-09-08 · commit `4431b31c5`
 
 How the provider lays out a request's KV cache, how it decides whether a
 previously computed prefix can be reused, and where reusable state lives:
@@ -94,7 +94,8 @@ production-key restart checks remain subject to the
 This selection change is not a release or deployment claim. SSD prefix reuse
 defaults on for the three exact Qwen IDs above and `gemma-4-26b-qat-4bit`.
 Gemma QAT uses the paged historical-attention complete checkpoint; automatic
-MTP remains disabled, and a contiguous fallback does not reuse that checkpoint. An explicit affirmative
+MTP resolves its catalog assistant through `SpecDecArtifactFunnel`, and a
+contiguous fallback does not reuse that checkpoint. An explicit affirmative
 `DARKBLOOM_PREFIX_CACHE` opts other models into their existing cache eligibility
 checks; a non-affirmative nonempty value disables all tiers. Both SSD codecs,
 local/connected load hashing and benchmark expectations use the model-scoped

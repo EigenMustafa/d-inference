@@ -207,6 +207,34 @@ struct SpecDecArtifactFunnelTests {
         #expect(await catalog.calls == 0)
     }
 
+    @Test("automatic QAT resolves a local assistant and preserves off, kill, and invalid-artifact fallbacks")
+    func automaticQATUsesValidatedFunnel() async throws {
+        let local = try makeLocalAssistant()
+        defer { try? FileManager.default.removeItem(at: local) }
+        let catalog = FunnelCatalog(nil)
+        let artifactFunnel = funnel(catalog: catalog, root: FileManager.default.temporaryDirectory)
+        let modelID = "gemma-4-26b-qat-4bit"
+        for (mode, path, environment, reason) in [
+            (MTPMode.auto, local.path, [:], nil),
+            (MTPMode.off, local.path, [:], MTPFallbackReason.configDisabled),
+            (MTPMode.auto, local.path, ["DARKBLOOM_CBV2_MTP": "0"], .killSwitchDisabled),
+            (MTPMode.auto, "/definitely/missing", [:], .localArtifactInvalid),
+        ] as [(MTPMode, String, [String: String], MTPFallbackReason?)] {
+            let prepared = await artifactFunnel.prepare(.init(
+                modelId: modelID, modelType: "gemma4",
+                enabled: mode.enablesMTP(
+                    forModelType: "gemma4", embeddedArtifactDeclared: false, modelID: modelID),
+                localPath: path, allowDownload: false, environment: environment))
+            #expect(prepared.status.reason == reason)
+            if reason == nil {
+                #expect(prepared.artifact?.source == .local)
+            } else {
+                #expect(prepared.artifact == nil)
+            }
+        }
+        #expect(await catalog.calls == 0)
+    }
+
     @Test("invalid local override does not silently activate catalog assistant")
     func invalidLocalDoesNotFallThrough() async {
         let catalog = FunnelCatalog(funnelModel(metadata: [

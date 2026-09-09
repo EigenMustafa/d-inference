@@ -1,6 +1,6 @@
 # Provider CLI reference
 
-> Last updated: 2026-09-08 · commit `884d97862`
+> Last updated: 2026-09-08 · commit `4431b31c5`
 
 Reference for the `darkbloom` command-line tool: every subcommand and flag, the
 files and identifiers it creates, the `provider.toml` keys it reads with their
@@ -573,7 +573,7 @@ darkbloom beta disable <feature>    # turn off
 |---------|--------|
 | `gemma-prefill-layer18` | Default-on layer-18 prefill submission; disable and restart for legacy submission behavior |
 | `gemma-weighted-r1` | Default-on atomic weighted-unsort + safe-R1 pair; disable and restart to roll back both |
-| `mtp` | MTP policy. Default `auto` drafts automatically for Qwen 3.5-family checkpoints that embed their head (`mtplx_mtp` in `config.json`); explicit on additionally enables catalog `spec_dec` assistants and local `mtp_drafter_path` overrides; explicit off is the rollback |
+| `mtp` | MTP policy. Default `auto` drafts automatically for Qwen 3.5-family checkpoints that embed their head (`mtplx_mtp` in `config.json`); auto also enables the catalog `spec_dec` assistant for exact `gemma-4-26b-qat-4bit`; explicit on enables other supported targets; explicit off is the rollback |
 
 `enable`/`disable` read-modify-write the TOML config and report whether a restart
 is required. Restart is the activation boundary for process-wide optimization
@@ -581,8 +581,10 @@ state. The durable locked write and restart instruction are implemented in
 `provider-swift/Sources/darkbloom/BetaCommand.swift:201-235`. See
 [Beta Features](beta-features.md) for the full guide. `darkbloom beta list` also
 accepts `--json`. Under the default `auto` mode a served checkpoint that embeds its MTP head
-drafts without any beta toggle; checkpoints without an embedded declaration
-stay target-only. Local parity results are not a blanket M1-M3/unknown-chip
+drafts without any beta toggle. Exact `gemma-4-26b-qat-4bit` also resolves its
+external assistant automatically; other checkpoints without an embedded
+declaration stay target-only. Missing or invalid assistants fall back to ordinary
+decode; standalone serving never auto-downloads assistant bytes. Local parity results are not a blanket M1-M3/unknown-chip
 certification.
 The published assistant metadata is visible in the
 [public production catalog](https://api.darkbloom.dev/v1/models/catalog?type=text)

@@ -8,19 +8,18 @@ extension ProviderLoop {
     /// not download assistant bytes and is bounded/fail-open; every ordinary
     /// load remains a local-only catalog-cache/artifact-cache consultation.
     ///
-    /// Only `mtp_mode = "on"` prewarms: catalog metadata exists to pair
-    /// separately published assistants, and `auto` activates only embedded
-    /// heads, which resolve from the checkpoint itself without any catalog.
+    /// `auto` prewarms only for the exact Gemma QAT target; explicit `on`
+    /// also permits other supported external assistants. Embedded Qwen heads
+    /// resolve from the checkpoint itself without catalog metadata.
     func prewarmSpecDecCatalog() async {
         let backend = loopConfig.config.backend
-        guard backend.mtpMode == .on,
-            backend.mtpDrafterPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+        guard backend.mtpDrafterPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
             SpecDecArtifactFunnel.killSwitchEnabled(
                 environment: ProcessInfo.processInfo.environment),
             let modelId = advertisedModels.values
                 .filter({
-                    SpecDecArtifactFunnel.isGemma4Target(modelType: $0.modelType)
-                        || SpecDecArtifactFunnel.isQwen35Target(modelType: $0.modelType)
+                    backend.mtpMode.requiresCatalogPrewarm(
+                        forModelType: $0.modelType, modelID: $0.id)
                 })
                 .map(\.id)
                 .sorted()
@@ -54,7 +53,8 @@ extension ProviderLoop {
                 modelType: modelInfo.modelType,
                 enabled: loopConfig.config.backend.mtpMode.enablesMTP(
                     forModelType: modelInfo.modelType,
-                    embeddedArtifactDeclared: inlineDeclaration.mayDeclareEmbeddedArtifact),
+                    embeddedArtifactDeclared: inlineDeclaration.mayDeclareEmbeddedArtifact,
+                    modelID: modelId),
                 localPath: loopConfig.config.backend.mtpDrafterPath,
                 modelDirectory: modelDirectory,
                 inlineDeclaration: inlineDeclaration,

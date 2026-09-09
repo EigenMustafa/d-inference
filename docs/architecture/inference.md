@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-06 · commit `2eebb5412`
+> Last updated: 2026-09-08 · commit `4431b31c5`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -135,7 +135,18 @@ by `deadlineProjectionRateHaircut = 0.5`. `WedgeMonitor.suspectStallSeconds =
 | Target | Drafter | Activation |
 |---|---|---|
 | Qwen3.5 family (`qwen3_5`, `qwen3_5_moe`) | Embedded head (`Qwen35InlineMTPAssistant`, request-stateful) | `mtp_mode = "auto"` (default) when the checkpoint declares the embedded artifact |
-| Gemma 4 | Separate assistant checkpoint (`Gemma4AssistantDraftModel`, stateless) | Requires `mtp_mode = "on"`; `SpecDecArtifactFunnel` resolves the catalog-declared `spec_dec` artifact, with `mtp_drafter_path` as a directory override |
+| Gemma 4 | Separate assistant checkpoint (`Gemma4AssistantDraftModel`, stateless) | Defaults to `auto` for exact `gemma-4-26b-qat-4bit`; other Gemma IDs require `on`. `SpecDecArtifactFunnel` resolves the catalog-declared `spec_dec` artifact, with `mtp_drafter_path` as a directory override |
+
+The shared `MTPMode.enablesMTP` policy receives the exact model ID from both
+`ProviderLoop.specDecPreparation` and `StandaloneServer.specDecPreparation`.
+Startup catalog prewarm includes the automatic QAT target; ordinary slot loads
+remain local-only and optional artifact prefetch remains asynchronous.
+Standalone serving never downloads an assistant. Missing, incompatible, or
+memory-ineligible assistants preserve target-only serving; explicit `off` and
+`DARKBLOOM_CBV2_MTP=0` disable MTP
+(`provider-swift/Sources/ProviderCore/Config/ProviderConfig.swift`,
+`provider-swift/Sources/ProviderCore/ProviderLoop+MTP.swift`,
+`provider-swift/Sources/ProviderCore/Server/StandaloneServer+MTP.swift`).
 
 `MTPAutomaticVerificationPolicy`: `initialDraftTokens = 1`;
 `fixedDraftTokens = nil` for request-stateful drafters (engine controller, 0…4)

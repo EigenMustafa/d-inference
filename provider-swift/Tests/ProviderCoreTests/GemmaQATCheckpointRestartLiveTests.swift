@@ -82,7 +82,7 @@ struct GemmaQATCheckpointRestartLiveTests {
             case .info: break
             case .error(let message): failure = message
             case .terminal(_, let message, _, _):
-                if let message { failure = message }
+                failure = message
             }
         }
         try #require(failure == nil, "request failed: \(failure ?? "")")

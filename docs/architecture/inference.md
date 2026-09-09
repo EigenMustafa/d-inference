@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `970384ae7`
+> Last updated: 2026-09-08 · commit `5d1c90582`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -186,11 +186,14 @@ Gemma uses bounded rectangular target verification: one target traversal scores
 its seed and draft columns, while ordered attention and speculative transactions
 preserve causal visibility and discard rejected suffixes. The depth controller
 compares ordinary decode's chained commit intervals with actual committed output
-per MTP interval. Adaptive stateless Gemma pairs seed time with seed output,
+across bounded eight-round MTP learning windows. Each round streams immediately
+and retains the ordinary cancellation, output-budget and capacity gates. Adaptive
+stateless Gemma pairs seed time with seed output,
 excludes the first positive-shape compilation from its steady estimate while
 retaining that work in telemetry, and refreshes learning when the request cohort
 changes. It selects ordinary decode when that is faster and periodically probes
-again (`CBv2MTPCommittedGoodputClock`, `CBv2MTPDepthController` in
+again (`CBv2MTPCommittedGoodputClock`, `CBv2MTPCommittedWindow`,
+`CBv2MTPDepthController` in
 `libs/mlx-swift-lm/Libraries/MLXLMCommon/ContinuousBatchingV2/MTP/`). Wider evaluation
 can change floating-point rounding and generated wording; acceptance remains
 target-authoritative. Supported sampling uses the target distribution and an

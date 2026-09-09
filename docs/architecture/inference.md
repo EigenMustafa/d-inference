@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `4431b31c5`
+> Last updated: 2026-09-08 · commit `12032996e`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -150,13 +150,17 @@ memory-ineligible assistants preserve target-only serving; explicit `off` and
 
 `MTPAutomaticVerificationPolicy`: `initialDraftTokens = 1`;
 `fixedDraftTokens = nil` for request-stateful drafters (engine controller, 0…4)
-and `1` for the stateless Gemma drafter; `maxRectangularTokens = 8` on
+and exact stateless `gemma-4-26b-qat-4bit` (controller bounded to 0…1).
+Other stateless assistants and explicit offline Gemma verification controls
+retain fixed depth `1`; `maxRectangularTokens = 8` on
 M3/M4/M5 and `4` on M1/M2/unknown, lowered only by
 `DARKBLOOM_MTP_MAX_RECTANGULAR_TOKENS`
 (`provider-swift/Sources/ProviderCore/Inference/MTPAutomaticVerificationPolicy.swift`).
 For the exact `gemma-4-26b-qat-4bit` artifact, an enabled assistant uses serial
 target verification: drafting and acceptance remain enabled, but each target column
-uses the ordinary forward shape. This avoids the measured width-dependent
+uses the ordinary forward shape. The depth controller compares finalized
+step cost with accepted-token benefit, can select ordinary decode when drafting
+is unprofitable, and periodically probes again. This avoids the measured width-dependent
 logit difference and gives up rectangular target amortization. Explicit offline
 Gemma verification controls retain their bounded automatic baseline and the
 existing target/drafter checks. Drafter-required modes retain priority

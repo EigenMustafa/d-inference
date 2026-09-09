@@ -2,6 +2,8 @@
 
 ## Unreleased — Gemma QAT SSD prefix caching and automatic MTP
 
+- Bound automatic Gemma QAT speculation to an adaptive depth of zero or one, allowing ordinary decode when measured draft cost outweighs accepted-token benefit. Preserve fixed-depth offline verification controls and other assistants’ depth policies.
+
 - Enable encrypted SSD prefix caching by default for `gemma-4-26b-qat-4bit` using complete paged historical-attention checkpoints. Preserve the global cache disable, identity and tenant checks, contiguous cold fallback, and target-only fallback when the assistant cannot be validated or loaded. Automatic MTP also resolves the existing catalog assistant for this exact QAT target; explicit off and the process kill switch remain authoritative. Other Gemma artifacts and GPT-OSS remain opt-in; production cache-routing activation remains separate.
 
 ## Unreleased — per-model cache reporting

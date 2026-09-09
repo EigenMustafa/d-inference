@@ -375,12 +375,15 @@ enum EngineV2SlotFactory {
             modelID: modelId,
             benchmarkVerification: assemblyOverrides.gemmaMTPVerification,
             automaticRectangularTokens: automaticRectangularTokens)
-        let fixedDraftTokens = MTPAutomaticVerificationPolicy.fixedDraftTokens(
+        let draftDepth = MTPAutomaticVerificationPolicy.draftDepthPolicy(
             usesRequestStatefulDrafter:
-                assistantHandle?.drafter is any CBv2MTPRequestStatefulDrafter)
+                assistantHandle?.drafter is any CBv2MTPRequestStatefulDrafter,
+            modelID: modelId,
+            hasBenchmarkVerificationOverride: assemblyOverrides.gemmaMTPVerification != nil)
         var mtpConfig = CBv2MTPConfig(
             enabled: assistantHandle != nil,
-            fixedDraftTokens: fixedDraftTokens,
+            maxDraftTokens: draftDepth.maximum,
+            fixedDraftTokens: draftDepth.fixed,
             verificationMode: mtpVerification.mode,
             maxAutomaticRectangularTokens: mtpVerification.automaticRectangularTokens)
         if let verification = assemblyOverrides.gemmaMTPVerification {

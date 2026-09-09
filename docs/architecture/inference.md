@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `efb5517fc`
+> Last updated: 2026-09-08 · commit `1b9bbb5d5`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -141,7 +141,7 @@ The shared `MTPMode.enablesMTP` policy receives the exact model ID from both
 `ProviderLoop.specDecPreparation` and `StandaloneServer.specDecPreparation`.
 Startup catalog prewarm includes the automatic QAT target; ordinary slot loads
 remain local-only and optional artifact prefetch remains asynchronous.
-A network provider whose first QAT slot starts target-only monitors assistant
+A provider or standalone server whose first QAT slot starts target-only monitors assistant
 readiness asynchronously. It stages a verified assistant and an unregistered
 replacement over the retained target, with a separate pending-memory lease and
 only the minimum serviceable KV grant. Existing requests continue on the old
@@ -154,8 +154,12 @@ makes up to 120 idle checks spaced 500 ms apart for an idle cutover, and retries
 after five minutes. Failed artifact fetches independently back off exponentially
 with jitter, capped at five minutes
 (`provider-swift/Sources/ProviderCore/ProviderLoop+MTPUpgrade.swift`,
-`provider-swift/Sources/ProviderCore/Inference/MTPIdleUpgrade.swift`).
-Standalone serving never downloads an assistant. Missing, incompatible, or
+`provider-swift/Sources/ProviderCore/Inference/MTPIdleUpgrade.swift`,
+`provider-swift/Sources/ProviderCore/Server/StandaloneServer+MTPUpgrade.swift`).
+Standalone uses the same coordinator catalog authority as the provider CLI
+(`coordinator.url`), downloads in the background, and retains explicit local
+assistant overrides. Transition logs report preparation duration, waiting for idle,
+installation and fallback without repeating every readiness poll. Missing, incompatible, or
 memory-ineligible assistants preserve target-only serving; explicit `off` and
 `DARKBLOOM_CBV2_MTP=0` disable MTP
 (`provider-swift/Sources/ProviderCore/Config/ProviderConfig.swift`,

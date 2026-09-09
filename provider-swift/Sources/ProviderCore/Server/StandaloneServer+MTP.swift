@@ -5,8 +5,8 @@ extension StandaloneServer {
         modelId: String, modelInfo: ModelInfo, modelDirectory: URL? = nil
     ) async -> SpecDecPreparation {
         // The shared funnel validates embedded Qwen heads and the external
-        // Gemma assistant. Standalone mode only consults local artifacts;
-        // missing assistant bytes preserve target-only serving.
+        // Gemma assistant. Missing external artifacts download asynchronously;
+        // the current target-only engine remains available until an idle swap.
         let inlineDeclaration = modelDirectory.map {
             SpecDecStore.inlineDeclarationProbe(directory: $0)
         } ?? .absent
@@ -21,9 +21,9 @@ extension StandaloneServer {
                 localPath: config.mtpDrafterPath,
                 modelDirectory: modelDirectory,
                 inlineDeclaration: inlineDeclaration,
-                // `darkbloom start --local` is coordinator-independent and
-                // never auto-downloads an assistant.
-                allowDownload: false,
+                // Catalog/download failure remains target-only. No request
+                // waits for the optional assistant's network transfer.
+                allowDownload: true,
                 environment: ProcessInfo.processInfo.environment))
     }
 }

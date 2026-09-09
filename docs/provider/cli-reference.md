@@ -1,6 +1,6 @@
 # Provider CLI reference
 
-> Last updated: 2026-09-08 · commit `4431b31c5`
+> Last updated: 2026-09-08 · commit `1b9bbb5d5`
 
 Reference for the `darkbloom` command-line tool: every subcommand and flag, the
 files and identifiers it creates, the `provider.toml` keys it reads with their
@@ -584,8 +584,11 @@ accepts `--json`. Under the default `auto` mode a served checkpoint that embeds 
 drafts without any beta toggle. Exact `gemma-4-26b-qat-4bit` also resolves its
 external assistant automatically; other checkpoints without an embedded
 declaration stay target-only. Missing or invalid assistants fall back to ordinary
-decode; standalone serving never auto-downloads assistant bytes. Local parity results are not a blanket M1-M3/unknown-chip
-certification.
+decode. Standalone serving also downloads the verified assistant in the background,
+using the configured `coordinator.url` catalog, and activates it only when the
+current engine is idle. Existing requests keep their engine; insufficient memory
+or preparation failure preserves target-only serving. Local parity results are not
+a blanket M1-M3/unknown-chip certification.
 The published assistant metadata is visible in the
 [public production catalog](https://api.darkbloom.dev/v1/models/catalog?type=text)
 under `gemma-4-26b-qat-4bit.metadata.spec_dec`.

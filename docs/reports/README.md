@@ -1,6 +1,6 @@
 # Reports — dated records
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-08 · commit `4ae34f033`
 
 Frozen records: incident analyses, measurements, experiment results, and
 migration records. Each file describes the code **as it was on its date**; none
@@ -214,3 +214,5 @@ Machine-generated; kept as evidence for the reports above.
 - [Actual forward-width runtime build and native validation](2026-09-06-forward-width-runtime.md) — source-bound M5 build, engine/compiler tests and retained setup failures; real-model batching remains separate.
 
 - [Representative quality cohort preparation](2026-09-06-representative-quality-cohort.md) — six-artifact prose/code/reasoning inputs with CPU checks; model execution and quality conclusions remain pending.
+
+- [Gemma QAT default cache and MTP validation](2026-09-08-gemma-qat-defaults.md) — measured decode gains, live assistant download/swap, cache isolation, capability checks and limitations.

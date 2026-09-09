@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-07 · commit `0b46b1618`
+> Last updated: 2026-09-09 · commit `884d97862`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -15,6 +15,12 @@ checksum rejection, fallback, and cancellation. `scripts/test-publish-model.sh`
 checks the artifact workflow payload. `TestHuggingFaceArtifactPostgresAndCache`
 in `coordinator/store/hugging_face_artifact_test.go` uses a disposable
 `DATABASE_URL` to check storage and cache invalidation.
+
+`ProductionPromptParityTests` drives the real model-free `MLXOpenAIService`
+preparation seam before tokenization. The shared public corpus covers JSON-object
+and schema response formats plus multi-system and text/tool/endpoint forms; it compares
+actual Swift tokens and scope-bound hashes with Rust plans. No production
+prompts or model weights are needed (`scripts/verify-prompt-parity.sh`).
 
 ## Prerequisites
 

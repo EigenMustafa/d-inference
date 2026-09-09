@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — cache prompt parity and coverage
+
+- Match provider JSON response-format instructions and Qwen/Harmony system-turn folding in cache planning so structured-output requests do not generate a false prompt-anchor mismatch. Exercise the real service preparation path in shared tokenizer/hash parity tests.
+- Measure per-model saved-prefill percentages using matched prompt-token denominators, separately for provider usage, accepted evidence and cache-selected terminals. Add bounded per-model receipt rejection and prompt-length/hash mismatch diagnostics.
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

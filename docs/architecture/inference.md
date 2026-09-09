@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `5d1c90582`
+> Last updated: 2026-09-08 · commit `fce72956c`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -190,8 +190,11 @@ across bounded eight-round MTP learning windows. Each round streams immediately
 and retains the ordinary cancellation, output-budget and capacity gates. Adaptive
 stateless Gemma pairs seed time with seed output,
 excludes the first positive-shape compilation from its steady estimate while
-retaining that work in telemetry, and refreshes learning when the request cohort
-changes. It selects ordinary decode when that is faster and periodically probes
+retaining that work in telemetry. Warmup is keyed by exact verification row count
+and draft depth, so three and four rows do not share a cold-shape exemption.
+Learning resets when request membership changes or a participating request finishes,
+even if its numeric ID is reused. Launch-generation checks discard late cost,
+baseline and acceptance observations from older work. It selects ordinary decode when that is faster and periodically probes
 again (`CBv2MTPCommittedGoodputClock`, `CBv2MTPCommittedWindow`,
 `CBv2MTPDepthController` in
 `libs/mlx-swift-lm/Libraries/MLXLMCommon/ContinuousBatchingV2/MTP/`). Wider evaluation

@@ -4,6 +4,7 @@
 
 - Download optional QAT assistants asynchronously in network and standalone serving while the current engine keeps serving. Standalone inherits the configured coordinator catalog authority. Stage a verified replacement under a separate memory reservation, activate only at a natural idle boundary, and retain the old engine on failure or insufficient memory. Add fleet-jittered retry backoff for failed assistant fetches.
 - Allow catalog-declared assistants to download from an immutable Hugging Face revision first, with checksum-verified R2 fallback and unchanged support for existing R2-only metadata.
+- Reset adaptive MTP learning when participating requests finish, including reused request IDs and late chained steps. Track first-use verification warmup by exact row count and draft depth.
 - Learn adaptive Gemma MTP speed from actual committed tokens and elapsed time, including both seed cost and seed output across bounded eight-round learning windows that stream each round. Refresh the ordinary-decode baseline across request cohorts and keep first-use compilation out of steady estimates without hiding its measured cost.
 
 - Restore bounded rectangular Gemma target verification with adaptive ordinary-decode fallback. Retain serial verification as an explicit diagnostic and preserve speculative KV rollback.

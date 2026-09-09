@@ -1,6 +1,6 @@
 # Telemetry
 
-> Last updated: 2026-09-09 · commit `c8665cee1`
+> Last updated: 2026-09-09 · commit `aa94fa5d6`
 
 How operational data leaves a provider, what the coordinator does with it, and
 why nothing on that path can carry a prompt or slow a request. The heartbeat is
@@ -127,6 +127,20 @@ Complete-checkpoint donations now settle the existing bounded
 `prefix_cache_donation_outcomes` counter once per exported endpoint, including
 synchronous refusal, queue overflow, shutdown, write failure and already-durable
 success (`SSDHybridCheckpointStore+Write.swift`, `PrefixCacheDonationTelemetry.swift`).
+Complete-checkpoint outcomes distinguish host-memory refusal, stale epoch,
+maintenance contention, low disk space, unsafe root, fresh-write I/O error,
+unreadable existing file and post-write eviction. Error descriptions and paths
+never become metric labels. The legacy `write_failed` still covers unclassified
+producer errors and older providers, so it must not be interpreted as a count
+of physical disk errors.
+
+A failed atomic creation that never entered the index does not revoke unrelated
+checkpoints: the next donation can retry after the failure clears. Failure to
+reauthenticate an indexed file still removes that file under an epoch change
+before any ready receipt can be published. Cancellation and stale-epoch work
+publish no receipt and do not revoke a newer epoch's evidence
+(`SSDHybridCheckpointStore.performWrite`). There is no unbounded retry loop or
+retained failed tensor job.
 The complete-store `donation_drops_total` counter covers queued-write
 `writesDropped` only; prequeue refusals are counted by the donation outcome
 snapshot. Maintenance publishes its cumulative result under a separate short

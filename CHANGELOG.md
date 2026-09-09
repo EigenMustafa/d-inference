@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — checkpoint write recovery
+
+- Preserve unrelated valid cache checkpoints when atomic creation of a new checkpoint fails; a later donation can retry without an unnecessary cache-epoch reset. Existing files that fail reauthentication still revoke their cache evidence.
+- Distinguish complete-checkpoint host-memory, epoch, maintenance, disk-space, unsafe-path, I/O and eviction outcomes in bounded provider/coordinator telemetry.
+
 ## Unreleased — cache prompt parity and coverage
 
 - Match provider JSON response-format instructions and Qwen/Harmony system-turn folding in cache planning so structured-output requests do not generate a false prompt-anchor mismatch. Exercise the real service preparation path in shared tokenizer/hash parity tests.

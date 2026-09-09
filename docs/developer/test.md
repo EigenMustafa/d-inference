@@ -1,6 +1,6 @@
 # Test
 
-> Last updated: 2026-09-09 · commit `5ebfc95b2`
+> Last updated: 2026-09-09 · commit `1c74d7a17`
 
 How to run the unit tests for each component, the end-to-end suite that boots a
 real coordinator + Swift provider against ephemeral Postgres, and the docs
@@ -109,6 +109,11 @@ go test ./e2e/testbed -run '^TestCleanup' -count=1
 ```
 
 #### Coordinator startup and reconnect recovery
+
+`TestSupervisorRestartsChildAndBecomesReady` allows a five-second helper startup
+and a fifteen-second overall wait so concurrent cold builds do not exhaust its
+restart budget. It asserts restart plus readiness, not a production startup SLA;
+production supervisor deadlines are unchanged (`coordinator/promptcontract/supervisor_test.go`).
 
 The [startup observer](../operations/coordinator-startup-measurement.md) has
 standard-library tests using only local HTTP stubs and a deterministic clock.

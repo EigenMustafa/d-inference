@@ -145,7 +145,8 @@ private func mtpCatalogArtifact() throws -> SpecDecArtifact {
         maximumFileCount: 8,
         allowedFileRoles: ["config", "weight"],
         configSHA256: mtpSHA256(config),
-        revision: manifest.version)
+        revision: manifest.version,
+        huggingFaceArtifact: nil)
     let verification = try SpecDecStore.verifyPublishedArtifact(
         at: directory, reference: reference).get()
     return SpecDecArtifact(

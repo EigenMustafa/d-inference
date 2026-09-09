@@ -3,6 +3,7 @@
 ## Unreleased — Gemma QAT SSD prefix caching and automatic MTP
 
 - Download optional QAT assistants asynchronously while the current engine keeps serving. Stage a verified replacement under a separate memory reservation, activate only at a natural idle boundary, and retain the old engine on failure or insufficient memory. Add fleet-jittered retry backoff for failed assistant fetches.
+- Allow catalog-declared assistants to download from an immutable Hugging Face revision first, with checksum-verified R2 fallback and unchanged support for existing R2-only metadata.
 
 - Restore bounded rectangular Gemma target verification with adaptive ordinary-decode fallback. Retain serial verification as an explicit diagnostic and preserve speculative KV rollback.
 

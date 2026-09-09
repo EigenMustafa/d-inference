@@ -283,7 +283,8 @@ public struct SpecDecResolver: Sendable {
 
         for job in jobs {
             do {
-                try await downloader.downloadManifestFileWithResume(job)
+                try await downloader.downloadManifestFileWithResume(
+                    job, huggingFaceArtifact: reference.huggingFaceArtifact)
             } catch {
                 let detail = String(describing: error)
                 let reason: MTPFallbackReason = detail.contains("SHA-256 mismatch")

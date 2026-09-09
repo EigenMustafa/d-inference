@@ -160,7 +160,7 @@ extension ProviderLoop {
         extraWeightBytes: Int,
         activationReserveBytes: UInt64? = nil
     ) -> UInt64 {
-        var totalWeights = UInt64(max(0, extraWeightBytes))
+        var totalWeights = MTPStagingReservations.adding(UInt64(max(0, extraWeightBytes)), mtpStagingBytes)
         for (_, slot) in modelSlots {
             let (sum, overflow) = totalWeights
                 .addingReportingOverflow(UInt64(max(0, slot.sizing.weightsBytes)))

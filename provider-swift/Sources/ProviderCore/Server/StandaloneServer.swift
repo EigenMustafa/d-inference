@@ -260,6 +260,7 @@ public actor StandaloneServer {
     var lifecycleState: LifecycleState = .stopped
     let kvBudget: GlobalKVCacheBudget
     var specDecFunnel: SpecDecArtifactFunnel
+    var mtpStagingReservations = MTPStagingReservations()
     var mtpUpgradeMonitorTask: Task<Void, Never>?
     var mtpUpgradeTransitions: Set<String> = []
     var mtpUpgradeWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
@@ -802,7 +803,7 @@ public actor StandaloneServer {
     private func fleetKVBudgetBytes(
         extraWeightBytes: Int, activationReserveBytes: UInt64? = nil
     ) -> UInt64 {
-        var totalWeights = UInt64(max(0, extraWeightBytes))
+        var totalWeights = MTPStagingReservations.adding(UInt64(max(0, extraWeightBytes)), mtpStagingBytes)
         for (_, slot) in slots {
             let (sum, overflow) = totalWeights
                 .addingReportingOverflow(UInt64(max(0, slot.sizing.weightsBytes)))

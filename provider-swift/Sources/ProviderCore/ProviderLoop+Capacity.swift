@@ -95,7 +95,7 @@ extension ProviderLoop {
             // shared KV gate would reject. The runtime reads each engine's
             // CURRENT (post-re-slice) grant per heartbeat — never a stale
             // construction-time figure. Heartbeat cadence only.
-            var totalResidentWeightBytes: UInt64 = 0
+            var totalResidentWeightBytes = mtpStagingBytes
             for (_, slot) in modelSlots {
                 let (sum, overflow) = totalResidentWeightBytes
                     .addingReportingOverflow(UInt64(max(0, slot.sizing.weightsBytes)))

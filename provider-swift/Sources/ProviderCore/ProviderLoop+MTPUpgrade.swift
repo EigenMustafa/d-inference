@@ -22,6 +22,10 @@ final class StagedProviderMTPUpgrade: @unchecked Sendable {
 }
 
 extension ProviderLoop {
+    var mtpStagingBytes: UInt64 {
+        mtpStagingReservations.extraBytes(residentTargets: Set(modelSlots.values.map { ObjectIdentifier($0.engineV2) }))
+    }
+
     func startMTPUpgradeMonitor() {
         guard mtpUpgradeMonitorTask == nil else { return }
         mtpUpgradeMonitorTask = Task { [weak self] in
@@ -97,6 +101,11 @@ extension ProviderLoop {
             logger.warning("mtp: model=\(modelID) assistant staging deferred: insufficient memory; retaining target engine")
             throw MTPIdleUpgrade.PreparationError.insufficientMemory
         }
+        await acquireResliceGate()
+        mtpStagingReservations.reserve(lease, target: ObjectIdentifier(original.engineV2),
+            targetBytes: UInt64(max(0, original.sizing.weightsBytes)),
+            assistantBytes: artifact.residentBytes, kvBytes: UInt64(grant))
+        releaseResliceGate()
         let preparationStarted = ContinuousClock.now
         var prepared: EngineV2PreparedModel?
         var replacement: ProviderEngineBundle?
@@ -141,6 +150,7 @@ extension ProviderLoop {
             if let replacement { await replacement.bridge.shutdown(); replacement.releaseAssistant() }
             prepared?.assistant?.release()
             MLX.Memory.clearCache()
+            mtpStagingReservations.release(lease)
             await kvBudget.finishPendingLoad(lease)
             logger.warning("mtp: model=\(modelID) optional preparation failed: \(error); retaining target engine")
             throw error
@@ -184,6 +194,7 @@ extension ProviderLoop {
         await staged.original.engineV2.shutdown()
         staged.original.engineBundle.releaseAssistant()
         MLX.Memory.clearCache()
+        mtpStagingReservations.release(staged.lease)
         await kvBudget.finishPendingLoad(staged.lease)
         await resliceGrowSurvivorsLocked()
         syncWarmModelState()
@@ -196,6 +207,7 @@ extension ProviderLoop {
         await staged.replacement.bridge.shutdown()
         staged.replacement.releaseAssistant()
         MLX.Memory.clearCache()
+        mtpStagingReservations.release(staged.lease)
         await kvBudget.finishPendingLoad(staged.lease)
     }
 

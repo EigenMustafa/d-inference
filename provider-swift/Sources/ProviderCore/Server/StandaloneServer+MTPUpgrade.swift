@@ -22,6 +22,10 @@ final class StagedStandaloneMTPUpgrade: @unchecked Sendable {
 }
 
 extension StandaloneServer {
+    var mtpStagingBytes: UInt64 {
+        mtpStagingReservations.extraBytes(residentTargets: Set(slots.values.map { ObjectIdentifier($0.bridge) }))
+    }
+
     func startMTPUpgradeMonitor() {
         guard mtpUpgradeMonitorTask == nil else { return }
         mtpUpgradeMonitorTask = Task { [weak self] in
@@ -97,6 +101,9 @@ extension StandaloneServer {
             await finishMTPUpgradeLoad()
             throw MTPIdleUpgrade.PreparationError.insufficientMemory
         }
+        mtpStagingReservations.reserve(lease, target: ObjectIdentifier(original.bridge),
+            targetBytes: UInt64(max(0, original.sizing.weightsBytes)),
+            assistantBytes: artifact.residentBytes, kvBytes: UInt64(grant))
         let preparationStarted = ContinuousClock.now
         var prepared: EngineV2PreparedModel?
         var replacement: ProviderEngineBundle?
@@ -151,6 +158,7 @@ extension StandaloneServer {
             if let replacement { await replacement.bridge.shutdown(); replacement.releaseAssistant() }
             prepared?.assistant?.release()
             MLX.Memory.clearCache()
+            mtpStagingReservations.release(lease)
             await kvBudget.finishPendingLoad(lease)
             standaloneLogger.warning("mtp: model=\(modelID) optional preparation failed: \(String(describing: error)); retaining target engine")
             await finishMTPUpgradeLoad()
@@ -177,7 +185,6 @@ extension StandaloneServer {
         // No suspension between the last owner check and the admission gate.
         // Work arriving during publication waits; existing work is never drained.
         mtpUpgradeTransitions.insert(modelID)
-        defer { finishMTPUpgradeTransition(modelID) }
         slots[modelID] = CachedSlot(
             bundle: staged.replacement, container: staged.original.container,
             tokenizer: staged.original.tokenizer, modelType: staged.original.modelType,
@@ -189,8 +196,12 @@ extension StandaloneServer {
         await staged.original.bridge.shutdown()
         staged.original.bundle.releaseAssistant()
         MLX.Memory.clearCache()
+        mtpStagingReservations.release(staged.lease)
         await kvBudget.finishPendingLoad(staged.lease)
         await resliceGrowSurvivors()
+        // Deferred serving-set updates may wait for or retire this model.
+        // End publication before invoking that independent lifecycle work.
+        finishMTPUpgradeTransition(modelID)
         await finishMTPUpgradeLoad()
         standaloneLogger.info("mtp: verified assistant installed at idle boundary for \(modelID)")
         return true
@@ -200,6 +211,7 @@ extension StandaloneServer {
         await staged.replacement.bridge.shutdown()
         staged.replacement.releaseAssistant()
         MLX.Memory.clearCache()
+        mtpStagingReservations.release(staged.lease)
         await kvBudget.finishPendingLoad(staged.lease)
     }
 

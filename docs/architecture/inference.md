@@ -1,6 +1,6 @@
 # Provider inference engine
 
-> Last updated: 2026-09-08 · commit `1b9bbb5d5`
+> Last updated: 2026-09-08 · commit `d14a5a599`
 
 How a chat-completion request is served inside the `darkbloom` provider
 process in v0.8.16: one in-process engine (`mlx-swift-lm`
@@ -144,7 +144,11 @@ remain local-only and optional artifact prefetch remains asynchronous.
 A provider or standalone server whose first QAT slot starts target-only monitors assistant
 readiness asynchronously. It stages a verified assistant and an unregistered
 replacement over the retained target, with a separate pending-memory lease and
-only the minimum serviceable KV grant. Existing requests continue on the old
+only the minimum serviceable KV grant. Static fleet grants and network capacity
+clamps reserve the candidate's assistant and KV bytes; if the original target
+is concurrently unloaded, its retained weight basis stays counted until discard.
+Reservations follow the load generation, so delayed cleanup cannot release a
+new candidate's budget. Existing requests continue on the old
 engine. Publication waits for both network requests and local reservations to
 finish, briefly queues new admissions, then swaps engines and releases the old
 idle pool before regrowing grants. Failure, cancellation, a replaced target or

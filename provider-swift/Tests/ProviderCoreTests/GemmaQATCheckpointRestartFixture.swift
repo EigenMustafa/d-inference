@@ -17,6 +17,7 @@ final class GemmaQATCheckpointRestartFixture {
     let model: any LanguageModel
     let tokenizer: TokenizerHandle
     let eos: Set<Int>
+    let extraEOSTokens: [String]
     let tokens: [Int]
     let root: URL
     let key = SymmetricKey(size: .bits256)
@@ -24,6 +25,7 @@ final class GemmaQATCheckpointRestartFixture {
         modelAggregateHash: GemmaQATCheckpointRestartFixture.modelHash, promptContractID: "gemma-qat-restart-live-v1",
         buildID: "gated-live-test", numericsFingerprint: "paged-target-only-test-v1")
     private var bridges: [EngineV2Bridge] = []
+    private var stores: [SSDHybridCheckpointStore] = []
 
     init() async throws {
         guard LiveInferenceFixtures.ensureMetallibColocated() != nil else {
@@ -45,8 +47,12 @@ final class GemmaQATCheckpointRestartFixture {
         let wrapper = try #require(snapshot.model as? MLXVLM.Gemma4)
         model = try EngineV2Factory.directServingModel(model: wrapper, isVLM: true)
         try #require(ObjectIdentifier(model) == ObjectIdentifier(wrapper.textModel))
-        tokenizer = await container.perform { TokenizerHandle($0.tokenizer) }
-        eos = snapshot.eosTokenIds
+        let resolvedTokenizer = await container.perform { TokenizerHandle($0.tokenizer) }
+        tokenizer = resolvedTokenizer
+        eos = ModelEOSPolicy.effectiveEOSTokenIds(
+            modelId: Self.modelID, modelType: "gemma4", base: snapshot.eosTokenIds,
+            tokenToId: { resolvedTokenizer.inner.convertTokenToId($0) })
+        extraEOSTokens = snapshot.extraEOSTokens
         tokens = try Self.makePrompt(tokenizer)
         root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("gemma-qat-checkpoint-restart-\(UUID().uuidString)")
@@ -63,7 +69,7 @@ final class GemmaQATCheckpointRestartFixture {
             let text = records.joined(separator: "\n")
                 + "\nWhat is the release marker given at the beginning? Reply with the marker only."
             let tokens = try tokenizer.inner.applyChatTemplate(
-                messages: [["role": "user", "content": text]], tools: nil, additionalContext: nil)
+                messages: [["role": "user", "content": text]], tools: nil, additionalContext: ["enable_thinking": false])
             if tokens.count >= 6_144 {
                 try #require(tokens.count < 8_192, "bounded prompt construction exceeded its limit")
                 return tokens
@@ -97,6 +103,7 @@ final class GemmaQATCheckpointRestartFixture {
             maintainWholeRoot: {}), kekKey: key, kvBudget: nil,
             maxWriteBytesPerDay: SSDPrefixCachePolicy.defaultMaxWriteBytesPerDay,
             usesEphemeralKey: true)
+        stores.append(store)
         store.scanOnDisk()
         return store
     }
@@ -108,7 +115,8 @@ final class GemmaQATCheckpointRestartFixture {
             completePrefixCache: store, kvBackend: .paged, environment: [:])
         try #require(build.kvBackendKind == .paged && build.kvBackendFallbackReason == nil)
         let bridge = EngineV2Bridge(engine: build.engine, modelId: Self.modelID,
-            tokenizer: tokenizer, eosTokenIds: eos, maxConcurrentRequests: 1,
+            tokenizer: tokenizer, eosTokenIds: eos, extraEOSTokens: extraEOSTokens,
+            maxConcurrentRequests: 1,
             fixedRequestBytes: build.fixedRequestBytes, ssdHybridCheckpointStore: store,
             kvBackendKind: .paged)
         bridges.append(bridge)
@@ -118,7 +126,13 @@ final class GemmaQATCheckpointRestartFixture {
     func close() async {
         for bridge in bridges { await bridge.shutdown() }
         bridges.removeAll()
-        try? FileManager.default.removeItem(at: root)
+        // A store can be created before bridge construction throws. Drain it
+        // even when no bridge ever took ownership, before removing its files.
+        for store in stores { await store.closeAndWait() }
+        stores.removeAll()
+        do { try FileManager.default.removeItem(at: root) }
+        catch { Issue.record("restart fixture cleanup failed: \(error)") }
+        #expect(!FileManager.default.fileExists(atPath: root.path))
     }
 
     enum FixtureFailure: Error { case promptTooShort }

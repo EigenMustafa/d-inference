@@ -372,8 +372,6 @@ enum EngineV2SlotFactory {
             environment: environment)
         let mtpVerification = providerMTPVerificationPolicy(
             for: assistantHandle?.drafter,
-            modelID: modelId,
-            benchmarkVerification: assemblyOverrides.gemmaMTPVerification,
             automaticRectangularTokens: automaticRectangularTokens)
         let draftDepth = MTPAutomaticVerificationPolicy.draftDepthPolicy(
             usesRequestStatefulDrafter:

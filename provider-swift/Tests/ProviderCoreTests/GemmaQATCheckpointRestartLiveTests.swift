@@ -96,11 +96,23 @@ struct GemmaQATCheckpointRestartLiveTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         try #require(store.stats().entries > 0, "no complete checkpoint was persisted")
+        // Do not close the bridge after only the earlier checkpoint lands:
+        // shutdown deliberately drops queued writes, including the tail.
+        await store.waitForWritesForTesting()
     }
 
     private func requireIdle(_ bridge: EngineV2Bridge) async throws {
-        let capacity = await bridge.capacitySnapshot()
-        #expect(capacity.activeRequests == 0 && capacity.waitingRequests == 0)
-        #expect(capacity.kvBytesInUse == 0 && capacity.kvBytesReserved == 0)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while true {
+            let capacity = await bridge.capacitySnapshot()
+            let idle = capacity.activeRequests == 0 && capacity.waitingRequests == 0
+                && capacity.kvBytesInUse == 0 && capacity.kvBytesReserved == 0
+            if idle { return }
+            if ContinuousClock.now >= deadline {
+                try #require(idle, "request accounting did not drain before reconstruction")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 }

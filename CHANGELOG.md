@@ -2,6 +2,8 @@
 
 ## Unreleased — Gemma QAT SSD prefix caching and automatic MTP
 
+- Restore bounded rectangular Gemma target verification with adaptive ordinary-decode fallback. Retain serial verification as an explicit diagnostic and preserve speculative KV rollback.
+
 - Allow Gemma MTP to use target-prefix sampling for temperature/top-p/top-k/min-p requests; preserve ordinary decoding for unsupported transforms. Add real QAT encrypted-checkpoint restoration coverage across engine reconstruction.
 
 - Bound automatic Gemma QAT speculation to an adaptive depth of zero or one, allowing ordinary decode when measured draft cost outweighs accepted-token benefit. Preserve fixed-depth offline verification controls and other assistants’ depth policies.

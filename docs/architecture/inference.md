@@ -156,15 +156,17 @@ retain fixed depth `1`; `maxRectangularTokens = 8` on
 M3/M4/M5 and `4` on M1/M2/unknown, lowered only by
 `DARKBLOOM_MTP_MAX_RECTANGULAR_TOKENS`
 (`provider-swift/Sources/ProviderCore/Inference/MTPAutomaticVerificationPolicy.swift`).
-For the exact `gemma-4-26b-qat-4bit` artifact, an enabled assistant uses serial
-target verification: drafting and acceptance remain enabled, but each target column
-uses the ordinary forward shape. The depth controller compares finalized
-step cost with accepted-token benefit, can select ordinary decode when drafting
-is unprofitable, and periodically probes again. This avoids the measured width-dependent
-logit difference and gives up rectangular target amortization. Explicit offline
-Gemma verification controls retain their bounded automatic baseline and the
-existing target/drafter checks. Drafter-required modes retain priority
-(`provider-swift/Sources/ProviderCore/Inference/EngineV2MTPAssistant.swift`,
+Gemma uses bounded rectangular target verification: one target traversal scores
+its seed and draft columns, while ordered attention and speculative transactions
+preserve causal visibility and discard rejected suffixes. The depth controller
+compares finalized step cost with accepted-token benefit, selects ordinary decode
+when drafting is unprofitable, and periodically probes again. Wider evaluation
+can change floating-point rounding and generated wording; acceptance remains
+target-authoritative. Supported sampling uses the target distribution and an
+output-indexed RNG stream. Penalties, bias, logprobs, stop strings and token
+constraints retain their ordinary-decode exclusions. Explicit offline serial
+verification remains available as a diagnostic oracle; drafter-required modes
+retain priority (`provider-swift/Sources/ProviderCore/Inference/EngineV2MTPAssistant.swift`,
 `providerMTPVerificationPolicy`).
 Engine contract: `CBv2MTPConfig` with `testedMaxDraftTokens` (≤ 7) and
 `testedMaxSpeculativeBatch = 8`

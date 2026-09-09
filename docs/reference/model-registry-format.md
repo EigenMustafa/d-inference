@@ -232,6 +232,12 @@ missing or `null` preserves the existing R2-only assistant path. Malformed
 locators, branches and tags make the assistant unavailable, preserving target
 serving (`provider-swift/Sources/ProviderCore/SpecDec/SpecDecMetadata+HuggingFace.swift`).
 
+An assistant prefetch has a 15-minute total deadline, with the existing
+per-source idle timeout and cancellation checks. Downloads run while the
+target continues serving; an expired attempt removes its private staging
+files and retries later with backoff
+(`provider-swift/Sources/ProviderCore/SpecDec/SpecDecResolver.swift`).
+
 `SpecDecResolver.downloadArtifact` fetches and validates the registry manifest
 against `spec_dec.manifest_sha256`, then uses the same per-file HF-first/R2
 fallback helper as ordinary weights. Both sources must match that manifest's

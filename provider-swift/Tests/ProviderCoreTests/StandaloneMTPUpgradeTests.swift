@@ -203,6 +203,38 @@ struct StandaloneMTPUpgradeTests {
         await fixture.clean()
     }
 
+    @Test("optional pending-load refusal leaves the busy target and every reservation ledger intact")
+    func insufficientStagingMemoryKeepsTargetServing() async throws {
+        let fixture = try await StandaloneUpgradeFixture.make()
+        let acquired = try await fixture.server.acquireModel(standaloneUpgradeModelID)
+        fixture.originalEngine.setBusy(true)
+        let budget = await fixture.server.kvBudget
+        let ordinaryReserve = await fixture.server.resolvedActivationReserveBytes
+        // Deterministically leave no optional-load headroom in this fixture's
+        // own ledger, independent of host RAM or concurrent MLX test activity.
+        await budget.setActivationReserveBytes(.max)
+        await #expect(throws: MTPIdleUpgrade.PreparationError.self) {
+            _ = try await fixture.prepare()
+        }
+        await fixture.checkOriginal()
+        #expect(fixture.factory.latest == nil, "memory refusal must happen before replacement construction")
+        #expect(await fixture.server.debugSlotReservationCount(modelId: standaloneUpgradeModelID) == 1)
+        #expect(await fixture.original.capacitySnapshot().activeRequests == 1)
+        #expect(await fixture.server.debugOutstandingKVReservationBytes() == 0)
+        #expect(await budget.reservationIDsForTesting().isEmpty)
+        #expect(await fixture.server.mtpStagingBytes == 0)
+        #expect(await !fixture.server.isLoadingAny)
+        #expect(fixture.telemetry.postureCount == 0)
+
+        await budget.setActivationReserveBytes(ordinaryReserve)
+        fixture.originalEngine.setBusy(false)
+        await acquired.releaseToken.fire()
+        let next = try await fixture.server.acquireModel(standaloneUpgradeModelID)
+        #expect(next.engineV2Bridge === fixture.original)
+        await next.releaseToken.fire()
+        await fixture.clean()
+    }
+
     @Test("cancellation while busy discards the candidate and keeps target serving")
     func cancellationWhileBusy() async throws {
         let fixture = try await StandaloneUpgradeFixture.make()

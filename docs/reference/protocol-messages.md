@@ -97,6 +97,13 @@ connection, first.
 | `privacy_capabilities` | `*PrivacyCapabilities` | `PrivacyCapabilities?` | opt | [`privacy_capabilities`](#privacy_capabilities); providers `< v0.6.31` also send `hypervisor_active` inside it, which Go drops |
 | `wallet_address` | — | `String?` | Swift only | legacy key; Go has no field and drops it |
 
+A verified registration whose durable state cannot be recovered after bounded
+retries closes with WebSocket code **1013** (`StatusTryAgainLater`). It receives
+no inference work while recovery is pending. The provider's normal reconnect
+retries registration; this is a transient store failure, not failed attestation
+(`coordinator/api/provider.go`, `verifyProviderAttestation`;
+`coordinator/api/provider_restore.go`, `restorePersistedProviderState`).
+
 #### `hardware`
 
 Go `Hardware` · Swift `HardwareInfo`. All fields required.

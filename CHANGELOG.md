@@ -5,6 +5,19 @@
 - Preserve unrelated valid cache checkpoints when atomic creation of a new checkpoint fails; a later donation can retry without an unnecessary cache-epoch reset. Existing files that fail reauthentication still revoke their cache evidence.
 - Distinguish complete-checkpoint host-memory, epoch, maintenance, disk-space, unsafe-path, I/O and eviction outcomes in bounded provider/coordinator telemetry.
 
+## Unreleased — coordinator startup
+
+- Fix startup recovery around live summary creation and transient store failures: pin history before the attempt marker, retry verified provider recovery with a shared deadline, and exclude pending recovery from routing until it succeeds. Exhaustion closes the new registration for retry before evicting an existing provider session.
+- Add a read-only post-stop startup observer that separates candidate health/readiness and per-model routable capacity from optional disposable-test inference. Keep successful inference and synthetic-answer correctness distinct, and omit response text, usage and credentials from reports.
+
+- Recover provider history on reconnect through indexed identity lookups instead of scanning every historical session before serving. Select the newest prior session and preserve live attestation requirements.
+- Capture missing earnings-summary history once and resume per-key additions safely alongside existing live settlement; keep base-reward money separate from inference counts/tokens. Exclude incomplete and live reconnect records from history recovery, including late async writes. Publish completed provider records and reputation atomically, preserving legacy missing-reputation behavior while refusing failed reads. Maintain summaries on record-only inserts as well as account settlement. Add startup phase timings and a database-only migration command for approved preparation before cutover.
+
+## Unreleased — partial network geography
+
+- Keep network stats loading when request-location or route analytics time out. Refresh geography independently, expose unavailable sections explicitly, and show a map notice while the rest of the overview remains usable. Preserve valid empty maps and restore geography automatically after recovery.
+
+
 ## Unreleased — per-model cache reporting
 
 - Add internal model breakdowns for provider-reported cache hits/misses, cached and avoided-prefill tokens, accepted V2 proofs, cache-selected terminals and timing samples. Keep invalid/missing usage distinct from misses and retain the aggregate public status.

@@ -12,9 +12,10 @@ func earningsMigrationFixture(t *testing.T) *PostgresStore {
 	s := newWithdrawableMigrationStore(t, newWithdrawableTestDatabase(t))
 	for _, q := range []string{
 		`CREATE TABLE schema_migrations(id TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW())`,
-		`CREATE TABLE provider_earnings(account_id TEXT,provider_key TEXT,amount_micro_usd BIGINT,prompt_tokens INT,completion_tokens INT)`,
+		`CREATE TABLE provider_earnings(account_id TEXT,provider_key TEXT,amount_micro_usd BIGINT,prompt_tokens INT,completion_tokens INT,model TEXT)`,
 		`CREATE TABLE earnings_summary(key TEXT,key_type TEXT,total_count BIGINT,total_micro_usd BIGINT,total_prompt_tokens BIGINT,total_completion_tokens BIGINT,updated_at TIMESTAMPTZ,PRIMARY KEY(key,key_type))`,
-		`INSERT INTO provider_earnings VALUES ('a','p',100,20,30),('a','p',200,40,50)`,
+		earningsSummaryBackfillPendingDDL,
+		`INSERT INTO provider_earnings VALUES ('a','p',100,20,30,'m'),('a','p',200,40,50,'m')`,
 	} {
 		if _, err := s.pool.Exec(context.Background(), q); err != nil {
 			t.Fatal(err)
@@ -58,27 +59,36 @@ func TestEarningsSummaryMigrationOncePreservesLiveTotalsAndSkipsLockedHistory(t 
 	}
 }
 
-func TestEarningsSummaryMigrationFailureRollsBackMarkerAndBothSummaries(t *testing.T) {
+func TestEarningsSummaryMigrationResumesCommittedProgressWithoutDoubleCount(t *testing.T) {
 	s := earningsMigrationFixture(t)
 	ctx := context.Background()
-	// The account INSERT succeeds first; force the provider INSERT to fail.
 	if _, err := s.pool.Exec(ctx, `ALTER TABLE earnings_summary ADD CONSTRAINT fail_provider CHECK(key_type <> 'provider')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.applyEarningsSummaryMigration(ctx); err == nil {
 		t.Fatal("expected failure")
 	}
-	for _, table := range []string{"schema_migrations", "earnings_summary"} {
-		var n int
-		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != 0 {
-			t.Fatalf("partial %s: %d %v", table, n, err)
-		}
+	var accountMoney int64
+	if err := s.pool.QueryRow(ctx, `SELECT total_micro_usd FROM earnings_summary WHERE key='a' AND key_type='account'`).Scan(&accountMoney); err != nil || accountMoney != 300 {
+		t.Fatalf("committed account progress: %d %v", accountMoney, err)
 	}
-	if _, err := s.pool.Exec(ctx, `ALTER TABLE earnings_summary DROP CONSTRAINT fail_provider`); err != nil {
+	var finalMarker bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id=$1)`, earningsSummaryMigrationID).Scan(&finalMarker); err != nil || finalMarker {
+		t.Fatalf("premature marker: %v %v", finalMarker, err)
+	}
+	// History becomes unavailable after the plan commit: retry must use only
+	// the durable pending delta and must not double-add the completed account.
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE earnings_summary DROP CONSTRAINT fail_provider; DROP TABLE provider_earnings`); err != nil {
 		t.Fatal(err)
 	}
 	if applied, err := s.applyEarningsSummaryMigration(ctx); err != nil || !applied {
 		t.Fatalf("retry: %v %v", applied, err)
+	}
+	for _, key := range []string{"a", "p"} {
+		var money int64
+		if err := s.pool.QueryRow(ctx, `SELECT total_micro_usd FROM earnings_summary WHERE key=$1`, key).Scan(&money); err != nil || money != 300 {
+			t.Fatalf("resumed %s: %d %v", key, money, err)
+		}
 	}
 }
 

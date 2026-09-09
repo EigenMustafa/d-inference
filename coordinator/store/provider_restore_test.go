@@ -29,6 +29,10 @@ func TestProviderRestoreSelectsLatestPriorIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			latest, err := st.GetProviderForRestore(context.Background(), "serial", "key", nil)
+			if err != nil || latest == nil || latest.ID != "current" {
+				t.Fatalf("nil exclusions filtered all records: %+v %v", latest, err)
+			}
 			for _, tc := range []struct{ serial, key, exclude, want string }{
 				{"serial", "fallback", "current", "newest-prior"}, // serial takes priority
 				{"missing", "fallback", "current", "key-only"},
@@ -36,7 +40,7 @@ func TestProviderRestoreSelectsLatestPriorIdentity(t *testing.T) {
 				{"", "", "current", ""},
 				{"unknown", "unknown", "current", ""},
 			} {
-				got, err := st.GetProviderForRestore(context.Background(), tc.serial, tc.key, tc.exclude)
+				got, err := st.GetProviderForRestore(context.Background(), tc.serial, tc.key, []string{tc.exclude})
 				if err != nil {
 					t.Fatal(err)
 				}

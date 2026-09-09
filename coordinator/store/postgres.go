@@ -676,6 +676,8 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			PRIMARY KEY (key, key_type)
 		)`,
 
+		earningsSummaryBackfillPendingDDL,
+
 		// Provider payouts — wallet-based payout history for unlinked providers
 		`CREATE TABLE IF NOT EXISTS provider_payouts (
 			id BIGSERIAL PRIMARY KEY,
@@ -3946,16 +3948,18 @@ func (s *PostgresStore) RecordProviderEarning(earning *ProviderEarning) error {
 		`WITH earning AS (INSERT INTO provider_earnings (account_id, provider_id, provider_key, job_id, model, amount_micro_usd, prompt_tokens, completion_tokens, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (job_id) WHERE job_id <> '' DO NOTHING
-		 RETURNING account_id, provider_key, amount_micro_usd, prompt_tokens, completion_tokens
+		 RETURNING account_id, provider_key, model, amount_micro_usd, prompt_tokens, completion_tokens
 		), summaries AS (
-		 SELECT account_id AS key, 'account' AS key_type, amount_micro_usd, prompt_tokens, completion_tokens FROM earning WHERE account_id <> ''
+		 SELECT account_id AS key, 'account' AS key_type, model, amount_micro_usd, prompt_tokens, completion_tokens FROM earning WHERE account_id <> ''
 		 UNION ALL
-		 SELECT provider_key, 'provider', amount_micro_usd, prompt_tokens, completion_tokens FROM earning WHERE provider_key <> ''
+		 SELECT provider_key, 'provider', model, amount_micro_usd, prompt_tokens, completion_tokens FROM earning WHERE provider_key <> ''
 		)
 		INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-		SELECT key, key_type, 1, amount_micro_usd, prompt_tokens, completion_tokens, NOW() FROM summaries
+		SELECT key, key_type, CASE WHEN model = 'base_reward' THEN 0 ELSE 1 END, amount_micro_usd,
+		 CASE WHEN model = 'base_reward' THEN 0 ELSE prompt_tokens END,
+		 CASE WHEN model = 'base_reward' THEN 0 ELSE completion_tokens END, NOW() FROM summaries
 		ON CONFLICT (key, key_type) DO UPDATE SET
-		 total_count = earnings_summary.total_count + 1,
+		 total_count = earnings_summary.total_count + EXCLUDED.total_count,
 		 total_micro_usd = earnings_summary.total_micro_usd + EXCLUDED.total_micro_usd,
 		 total_prompt_tokens = earnings_summary.total_prompt_tokens + EXCLUDED.total_prompt_tokens,
 		 total_completion_tokens = earnings_summary.total_completion_tokens + EXCLUDED.total_completion_tokens,
@@ -4177,7 +4181,7 @@ func (s *PostgresStore) CreditProviderAccount(earning *ProviderEarning) error {
 				account_id, provider_id, provider_key, job_id, model, amount_micro_usd, prompt_tokens, completion_tokens, created_at
 			) VALUES ($1, $6, $7, $4, $8, $2, $9, $10, COALESCE($5::timestamptz, NOW()))
 			ON CONFLICT (job_id) WHERE job_id <> '' DO NOTHING
-			RETURNING account_id, provider_key, amount_micro_usd, prompt_tokens, completion_tokens
+			RETURNING account_id, provider_key, model, amount_micro_usd, prompt_tokens, completion_tokens
 		), credit AS (
 			INSERT INTO balances (account_id, balance_micro_usd, withdrawable_micro_usd, updated_at)
 			SELECT account_id, amount_micro_usd, amount_micro_usd, NOW() FROM earning
@@ -4192,19 +4196,23 @@ func (s *PostgresStore) CreditProviderAccount(earning *ProviderEarning) error {
 			FROM earning e CROSS JOIN credit c
 		), summary_account AS (
 			INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-			SELECT account_id, 'account', 1, amount_micro_usd, prompt_tokens, completion_tokens, NOW() FROM earning
+			SELECT account_id, 'account', CASE WHEN model = 'base_reward' THEN 0 ELSE 1 END, amount_micro_usd,
+			 CASE WHEN model = 'base_reward' THEN 0 ELSE prompt_tokens END,
+			 CASE WHEN model = 'base_reward' THEN 0 ELSE completion_tokens END, NOW() FROM earning
 			ON CONFLICT (key, key_type) DO UPDATE SET
-			  total_count = earnings_summary.total_count + 1,
+			  total_count = earnings_summary.total_count + EXCLUDED.total_count,
 			  total_micro_usd = earnings_summary.total_micro_usd + EXCLUDED.total_micro_usd,
 			  total_prompt_tokens = earnings_summary.total_prompt_tokens + EXCLUDED.total_prompt_tokens,
 			  total_completion_tokens = earnings_summary.total_completion_tokens + EXCLUDED.total_completion_tokens,
 			  updated_at = NOW()
 		), summary_provider AS (
 			INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-			SELECT provider_key, 'provider', 1, amount_micro_usd, prompt_tokens, completion_tokens, NOW() FROM earning
+			SELECT provider_key, 'provider', CASE WHEN model = 'base_reward' THEN 0 ELSE 1 END, amount_micro_usd,
+			 CASE WHEN model = 'base_reward' THEN 0 ELSE prompt_tokens END,
+			 CASE WHEN model = 'base_reward' THEN 0 ELSE completion_tokens END, NOW() FROM earning
 			WHERE provider_key <> ''
 			ON CONFLICT (key, key_type) DO UPDATE SET
-			  total_count = earnings_summary.total_count + 1,
+			  total_count = earnings_summary.total_count + EXCLUDED.total_count,
 			  total_micro_usd = earnings_summary.total_micro_usd + EXCLUDED.total_micro_usd,
 			  total_prompt_tokens = earnings_summary.total_prompt_tokens + EXCLUDED.total_prompt_tokens,
 			  total_completion_tokens = earnings_summary.total_completion_tokens + EXCLUDED.total_completion_tokens,

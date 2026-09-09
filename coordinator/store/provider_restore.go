@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,7 +12,10 @@ import (
 
 // Keep two bounded queries rather than an OR over identity columns: each uses
 // an ordered partial index and stops at the newest matching prior session.
-func (s *PostgresStore) GetProviderForRestore(ctx context.Context, serial, seKey, excludeID string) (*ProviderRecord, error) {
+func (s *PostgresStore) GetProviderForRestore(ctx context.Context, serial, seKey string, excludeIDs []string) (*ProviderRecord, error) {
+	if excludeIDs == nil {
+		excludeIDs = []string{}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for _, identity := range []struct{ column, value string }{
@@ -30,8 +34,8 @@ func (s *PostgresStore) GetProviderForRestore(ctx context.Context, serial, seKey
 			lifetime_requests_served, lifetime_tokens_generated,
 			last_session_requests_served, last_session_tokens_generated,
 			lifetime_stats, last_session_stats, registered_at, last_seen, public_key
-			FROM providers WHERE `+identity.column+` = $1 AND `+identity.column+` <> '' AND id <> $2
-			ORDER BY last_seen DESC, id DESC LIMIT 1`, identity.value, excludeID).Scan(
+			FROM providers WHERE `+identity.column+` = $1 AND `+identity.column+` <> '' AND id <> ALL($2::text[])
+			ORDER BY last_seen DESC, id DESC LIMIT 1`, identity.value, excludeIDs).Scan(
 			&p.ID, &p.Hardware, &p.Models, &p.Backend, &locationRaw,
 			&p.TrustLevel, &p.Attested, &p.AttestationResult, &p.SEPublicKey, &p.SerialNumber,
 			&p.MDAVerified, &p.MDACertChain, &p.Version, &p.RuntimeVerified, &p.PythonHash, &p.RuntimeHash,
@@ -52,7 +56,7 @@ func (s *PostgresStore) GetProviderForRestore(ctx context.Context, serial, seKey
 	return nil, nil
 }
 
-func (s *MemoryStore) GetProviderForRestore(ctx context.Context, serial, seKey, excludeID string) (*ProviderRecord, error) {
+func (s *MemoryStore) GetProviderForRestore(ctx context.Context, serial, seKey string, excludeIDs []string) (*ProviderRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -60,7 +64,7 @@ func (s *MemoryStore) GetProviderForRestore(ctx context.Context, serial, seKey, 
 	defer s.mu.RUnlock()
 	var serialMatch, keyMatch *ProviderRecord
 	for _, p := range s.providerRecords {
-		if p.ID == excludeID {
+		if slices.Contains(excludeIDs, p.ID) {
 			continue
 		}
 		if serial != "" && p.SerialNumber == serial && newerProviderRecord(p, serialMatch) {

@@ -200,6 +200,8 @@ func (r *Registry) persistProviderNow(p *Provider) {
 		return
 	}
 	saferun.Go(r.logger, "registry.persistProvider", func() {
+		p.persistMu.Lock()
+		defer p.persistMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -212,7 +214,7 @@ func (r *Registry) persistProviderNow(p *Provider) {
 		}
 		seKey := ""
 		serial := ""
-		if p.AttestationResult != nil {
+		if p.AttestationResult != nil && !p.stateRestorePending {
 			seKey = p.AttestationResult.PublicKey
 			serial = p.AttestationResult.SerialNumber
 		}
@@ -305,4 +307,13 @@ func (r *Registry) persistReputation(p *Provider) {
 			r.logger.Warn("failed to persist reputation", "provider_id", p.ID, "error", err)
 		}
 	})
+}
+
+// CompleteProviderStateRestore permits future durable identity publication only
+// after lookup and counter/reputation restoration have succeeded (or no history
+// exists). It does not grant attestation, MDA or any routing trust.
+func (p *Provider) CompleteProviderStateRestore() {
+	p.mu.Lock()
+	p.stateRestorePending = false
+	p.mu.Unlock()
 }

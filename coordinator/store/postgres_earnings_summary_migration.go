@@ -9,8 +9,9 @@ import (
 
 const earningsSummaryMigrationID = "backfill_earnings_summary_v1"
 
-// Preserve existing live summaries; supply absent keys once. The committed
-// marker prevents repeating both full-table GROUP BY scans on every restart.
+// Existing counters are preserved at the planning snapshot. Missing history is
+// durably staged once, then added to live counters in short per-key transactions.
+// The final marker prevents every later boot from scanning earnings history.
 func (s *PostgresStore) migrateEarningsSummary(ctx context.Context) error {
 	started := time.Now()
 	applied, err := s.applyEarningsSummaryMigration(ctx)
@@ -27,42 +28,55 @@ func (s *PostgresStore) migrateEarningsSummary(ctx context.Context) error {
 }
 
 func (s *PostgresStore) applyEarningsSummaryMigration(ctx context.Context) (bool, error) {
-	tx, err := s.pool.Begin(ctx)
+	conn, err := s.pool.Acquire(ctx)
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
-	// Unique insert serializes concurrent attempts. Marker and backfills commit
-	// together; failure/cancellation rolls back all three.
-	tag, err := tx.Exec(ctx, `INSERT INTO schema_migrations (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`, earningsSummaryMigrationID)
-	if err != nil {
-		return false, fmt.Errorf("store: claim earnings summary migration: %w", err)
+	defer conn.Release()
+	var done bool
+	check := func() error {
+		return conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id=$1)`, earningsSummaryMigrationID).Scan(&done)
 	}
-	if tag.RowsAffected() == 0 {
+	if err := check(); err != nil {
+		return false, err
+	}
+	if done {
 		return false, nil
 	}
-	for _, statement := range []string{
-		`INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-		 SELECT account_id, 'account', COUNT(*), COALESCE(SUM(amount_micro_usd), 0),
-		        COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), NOW()
-		 FROM provider_earnings
-		 WHERE account_id != ''
-		 GROUP BY account_id
-		 ON CONFLICT (key, key_type) DO NOTHING`,
-		`INSERT INTO earnings_summary (key, key_type, total_count, total_micro_usd, total_prompt_tokens, total_completion_tokens, updated_at)
-		 SELECT provider_key, 'provider', COUNT(*), COALESCE(SUM(amount_micro_usd), 0),
-		        COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), NOW()
-		 FROM provider_earnings
-		 WHERE provider_key != ''
-		 GROUP BY provider_key
-		 ON CONFLICT (key, key_type) DO NOTHING`,
-	} {
-		if _, err := tx.Exec(ctx, statement); err != nil {
-			return false, fmt.Errorf("store: backfill earnings summary: %w", err)
+	// Serialize migration runners on one leased connection (also works with a
+	// one-connection pool). Serving writers neither use nor need this advisory
+	// lock: their compatibility follows from atomic earning+summary commits.
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(cleanup, `SELECT pg_advisory_unlock(hashtext('darkbloom.earnings-summary-backfill.v1'))`); err != nil {
+			// Never return a potentially lock-owning session to the shared pool.
+			_ = conn.Conn().Close(cleanup)
+		}
+	}()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext('darkbloom.earnings-summary-backfill.v1'))`); err != nil {
+		return false, err
+	}
+	if err := check(); err != nil {
+		return false, err
+	}
+	if done {
+		return false, nil
+	}
+	if err := prepareEarningsSummaryBackfill(ctx, conn); err != nil {
+		return false, err
+	}
+	for {
+		applied, err := applyNextEarningsSummaryBackfill(ctx, conn)
+		if err != nil {
+			return false, err
+		}
+		if !applied {
+			break
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, err
+	if _, err := conn.Exec(ctx, `INSERT INTO schema_migrations(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, earningsSummaryMigrationID); err != nil {
+		return false, fmt.Errorf("store: finish earnings summary migration: %w", err)
 	}
 	return true, nil
 }

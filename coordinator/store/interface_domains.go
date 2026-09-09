@@ -653,9 +653,8 @@ type ProviderStore interface {
 
 	// GetProviderForRestore returns the newest historical record for a verified
 	// serial, falling back to the verified SE key only when no serial record exists.
-	// excludeID prevents the reconnect's asynchronously persisted empty state from
-	// shadowing its predecessor. No match returns (nil, nil); failures return errors.
-	GetProviderForRestore(ctx context.Context, serial, seKey, excludeID string) (*ProviderRecord, error)
+	// excludeIDs removes all live/in-progress sessions from the candidate set. No match returns (nil, nil); failures return errors.
+	GetProviderForRestore(ctx context.Context, serial, seKey string, excludeIDs []string) (*ProviderRecord, error)
 
 	// GetMDAChainBySerial returns the newest NON-EMPTY Apple MDA cert chain stored
 	// for a serial, or (nil, nil) if none. A reconnecting provider gets a new row

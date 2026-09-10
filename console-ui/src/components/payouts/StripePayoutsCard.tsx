@@ -31,7 +31,6 @@ export function StripePayoutsCard({
   icon,
   noun,
   className,
-  countryNotice,
   children,
 }: {
   status: StripeStatus | null;
@@ -53,8 +52,6 @@ export function StripePayoutsCard({
   icon: React.ReactNode;
   noun: string;
   className: string;
-  /** Optional notice rendered under the CountryPicker (e.g. payout-coverage caveat). */
-  countryNotice?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   // Stripe payouts not configured on this coordinator — hide the card entirely.
@@ -103,7 +100,6 @@ export function StripePayoutsCard({
             Your country
           </label>
           <CountryPicker options={status?.countries} value={selectedCountry} onChange={onCountryChange} />
-          {countryNotice}
           <button
             onClick={onOnboard}
             disabled={onboardLoading || !selectedCountry || status?.payouts_available === false}
@@ -152,7 +148,6 @@ export function StripePayoutsCard({
             Country
           </label>
           <CountryPicker options={status?.countries} value={selectedCountry} onChange={onCountryChange} />
-          {countryNotice}
           <button
             onClick={onOnboard}
             disabled={onboardLoading || !selectedCountry || status?.payouts_available === false}

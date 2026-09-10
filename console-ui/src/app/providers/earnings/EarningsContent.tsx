@@ -188,6 +188,9 @@ export default function EarningsContent() {
         </div>
       </div>
 
+      {/* Payout coverage caveat — set expectations before bank linking */}
+      <PayoutCoverageNotice />
+
       {/* Withdraw Earnings (Stripe Connect) */}
       <StripePayoutsCard
               confirmationPending={payouts.withdrawConfirmationPending}
@@ -209,7 +212,6 @@ export default function EarningsContent() {
         icon={<ArrowDownToLine size={16} className="text-teal" />}
         noun="earnings"
         className="rounded-xl bg-bg-secondary shadow-sm p-5"
-        countryNotice={<PayoutCoverageNotice />}
       >
         {/* Withdrawable earnings display */}
         <div className="flex items-baseline gap-1 mb-1 mt-1">

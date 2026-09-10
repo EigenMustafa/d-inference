@@ -15,6 +15,7 @@ import {
   ArrowDownToLine,
 } from "lucide-react";
 import {
+  PayoutCoverageNotice,
   PayoutModal,
   StripePayoutsCard,
   StripeWithdrawModal,
@@ -208,6 +209,7 @@ export default function EarningsContent() {
         icon={<ArrowDownToLine size={16} className="text-teal" />}
         noun="earnings"
         className="rounded-xl bg-bg-secondary shadow-sm p-5"
+        countryNotice={<PayoutCoverageNotice />}
       >
         {/* Withdrawable earnings display */}
         <div className="flex items-baseline gap-1 mb-1 mt-1">

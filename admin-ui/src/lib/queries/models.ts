@@ -18,17 +18,17 @@ export interface ModelRow {
   file_count: number | null;
   aggregate_sha256: string | null;
   // Platform pricing, micro-USD per 1M tokens (null = uses the coordinator
-  // default fallback). BIGINT → string from pg.
+  // default fallback). BIGINT → string from pg. cache_read_price_micro is the
+  // rate for prompt tokens served from a provider's prefix cache; null means
+  // the row sets none and the coordinator derives it from the input price.
   input_price_micro: string | null;
   output_price_micro: string | null;
+  cache_read_price_micro: string | null;
   created_at: string;
   updated_at: string;
 }
 
-// Coordinator fallback when a model has no platform price row
-// (payments.DefaultInputPricePerMillion / DefaultOutputPricePerMillion).
-export const DEFAULT_INPUT_PRICE_MICRO = 50_000;
-export const DEFAULT_OUTPUT_PRICE_MICRO = 200_000;
+export { DEFAULT_INPUT_PRICE_MICRO, DEFAULT_OUTPUT_PRICE_MICRO, derivedCacheReadMicro } from "@/lib/pricing";
 
 // All registered models, joined to their active version + that version's size.
 // LEFT JOINs so models without an active/ready version still show (size "—").
@@ -58,6 +58,7 @@ export async function listModels(limit = 200): Promise<ModelRow[]> {
             mv.aggregate_sha256,
             mp.input_price       AS input_price_micro,
             mp.output_price      AS output_price_micro,
+            mp.cache_read_price  AS cache_read_price_micro,
             mr.created_at,
             mr.updated_at
        FROM model_registry mr

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — model input minimums
+
+- Require 32 estimated input tokens by default across all four inference endpoints; shorter inputs receive HTTP 400 `input_too_short`. Publishers can set `runtime_parameters.min_input_tokens` per model, including `0` for small-input testing and `null` to inherit the deployment default. The floor counts prompt fields only, honors normal alias fallback, records rejection traits and servability, and refuses transient model-policy lookup failures with 503.
+
 ## Release candidate v0.9.1 — cache reliability and recovery (not shipped; 2026-09-09)
 
 Source changes since `v0.9.0`. Provider changes require a new signed bundle;

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -747,7 +748,7 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 
 		// Materialized usage totals — eliminates full-table scan of usage
 		// on every stats cache miss.  Single counter row incremented
-		// atomically by RecordUsage / RecordUsageWithCostAndLocation.
+		// atomically by RecordUsage.
 		`CREATE TABLE IF NOT EXISTS usage_totals (
 			id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 			total_requests BIGINT NOT NULL DEFAULT 0,
@@ -1748,14 +1749,17 @@ func (s *PostgresStore) UsageByConsumer(consumerKey string) []UsageRecord {
 
 // RecordUsage inserts a usage row (consumer key stored as its hash) and folds
 // the token counts into usage_totals in the same statement. Cached tokens are
-// a subset of prompt tokens, so the totals count prompt tokens once.
+// a subset of prompt tokens, so the totals count prompt tokens once. A failed
+// insert is logged rather than returned: billing has already settled, but a
+// missing row is an audit gap (usage history, per-key spend) that must not
+// disappear silently.
 func (s *PostgresStore) RecordUsage(rec UsageRecord) {
 	h := hashKey(rec.ConsumerKey)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, _ = s.pool.Exec(ctx,
+	_, err := s.pool.Exec(ctx,
 		`WITH ins AS (
 			INSERT INTO usage (provider_id, consumer_key_hash, key_id, model, public_model, prompt_tokens, cached_tokens, completion_tokens, request_id, cost_micro_usd, request_location)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -1768,6 +1772,9 @@ func (s *PostgresStore) RecordUsage(rec UsageRecord) {
 		rec.ProviderID, h, rec.KeyID, rec.Model, rec.PublicModel, rec.PromptTokens, rec.CachedTokens, rec.CompletionTokens,
 		rec.RequestID, rec.CostMicroUSD, marshalProviderLocation(rec.RequestLocation),
 	)
+	if err != nil {
+		slog.Error("store: record usage failed", "request_id", rec.RequestID, "model", rec.Model, "error", err)
+	}
 }
 
 const inferenceRouteSelectColumns = `

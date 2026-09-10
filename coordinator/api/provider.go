@@ -2375,9 +2375,6 @@ func (s *Server) handleCompleteAt(
 	} else {
 		totalCost = rates.CostWithMinimum(billable)
 	}
-	if billable.CachedTokens > 0 {
-		s.ddCount("billing.cached_prompt_tokens", int64(billable.CachedTokens), []string{"model:" + pr.Model})
-	}
 
 	providerPayout := payments.ProviderPayoutWithPercent(totalCost, feePercent)
 
@@ -2571,6 +2568,14 @@ func (s *Server) handleCompleteAt(
 	}
 
 	if billingFinalized {
+		// Revenue effect of the cache hit that was actually settled: what this
+		// request would have cost with every prompt token at the input rate,
+		// less what it did cost. Free self-route settles at 0, so nothing was
+		// discounted there.
+		if !freeSelfRoute && billable.CachedTokens > 0 {
+			s.ddCount("billing.cache_read_discount_micro_usd", rates.CacheReadDiscount(billable), []string{"model:" + pr.Model})
+		}
+
 		// Record in-memory usage (for current session queries).
 		s.ledger.RecordUsage(pr.ConsumerKey, payments.UsageEntry{
 			JobID:            msg.RequestID,

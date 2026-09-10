@@ -3,22 +3,10 @@ package api
 import (
 	"fmt"
 
+	"github.com/eigeninference/d-inference/coordinator/api/types"
 	"github.com/eigeninference/d-inference/coordinator/payments"
-	"github.com/eigeninference/d-inference/coordinator/protocol"
 	"github.com/eigeninference/d-inference/coordinator/store"
 )
-
-// billableUsage maps a provider's terminal usage onto the billing breakdown.
-// CachedTokens must already have passed validCacheUsage (clearCacheUsage zeroes
-// a malformed report), so what is billed at the cache-read rate is exactly the
-// prompt_tokens_details.cached_tokens the consumer sees.
-func billableUsage(u protocol.UsageInfo) payments.Usage {
-	return payments.Usage{
-		PromptTokens:     u.PromptTokens,
-		CachedTokens:     u.CachedTokens,
-		CompletionTokens: u.CompletionTokens,
-	}
-}
 
 // modelPriceInput is the price triple every price writer accepts — the admin
 // platform price (PUT /v1/admin/pricing), a provider's own custom price
@@ -58,17 +46,19 @@ func (in modelPriceInput) modelPrice(accountID, model string) store.ModelPrice {
 	}
 }
 
-// modelPriceFields renders a price row for JSON responses: the three effective
-// rates in micro-USD per 1M tokens plus their "$0.0500"-style USD twins. The
+// modelPriceQuote renders a price row at its effective settlement rates. The
 // cache-read rate is the one billing will use, derived when the row sets none.
-func modelPriceFields(price store.ModelPrice) map[string]any {
-	rates := payments.RatesFor(price, true)
-	return map[string]any{
-		"input_price":      rates.Input,
-		"output_price":     rates.Output,
-		"cache_read_price": rates.CacheRead,
-		"input_usd":        payments.FormatPerMillionUSD(rates.Input),
-		"output_usd":       payments.FormatPerMillionUSD(rates.Output),
-		"cache_read_usd":   payments.FormatPerMillionUSD(rates.CacheRead),
+func modelPriceQuote(price store.ModelPrice) types.ModelPriceQuote {
+	return ratesQuote(payments.RatesFor(price, true))
+}
+
+func ratesQuote(rates payments.Rates) types.ModelPriceQuote {
+	return types.ModelPriceQuote{
+		InputPrice:     rates.Input,
+		OutputPrice:    rates.Output,
+		CacheReadPrice: rates.CacheRead,
+		InputUSD:       payments.FormatPerMillionUSD(rates.Input),
+		OutputUSD:      payments.FormatPerMillionUSD(rates.Output),
+		CacheReadUSD:   payments.FormatPerMillionUSD(rates.CacheRead),
 	}
 }

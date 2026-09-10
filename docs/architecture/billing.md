@@ -46,7 +46,7 @@ how-to is [`consumer/billing.md`](../consumer/billing.md).
 | Provider custom price | `PUT /v1/pricing` / `DELETE /v1/pricing` for the caller's own account; Privy users only (`coordinator/api/billing_handlers.go` `handleSetPricing`, `handleDeletePricing`). Validation is `> 0` plus the `cache_read_price` bound; there is no floor or ceiling relative to the platform price. |
 | Resolution at settlement | provider custom → platform → `DefaultInputPricePerMillion` / `DefaultOutputPricePerMillion` (`coordinator/api/provider.go` `handleCompleteAt`). Service consumers skip the first step. `payments.RatesFor` turns the winning row into `Rates{Input, Output, CacheRead}`; an unset `cache_read_price` derives as `DefaultCacheReadPrice(input)` = input less `DefaultCacheReadDiscountPercent` (50%). The reservation uses the same order with the provider chosen at dispatch (`coordinator/api/consumer.go` `providerReservationCost`, `reservationCost`). |
 | Cost | `Rates.Cost` bills `(promptTokens − cachedTokens) × in / 1M + cachedTokens × cacheRead / 1M + completionTokens × out / 1M`, flooring non-zero usage at 1 µUSD (service traffic); `Rates.CostWithMinimum` applies `minimumChargeMicroUSD` instead (`coordinator/payments/pricing.go`). Cached tokens: invariant 5. |
-| Public read | `GET /v1/pricing` returns the `platform` rows plus the fallback defaults, each with its effective `cache_read_price` (`handleGetPricing`, `modelPriceFields`); the OpenRouter model feed renders the same `Rates` as USD-per-token strings — `prompt`, `completion`, `input_cache_read` — via `coordinator/payments/pricing.go` `FormatPerTokenUSD` (`coordinator/api/openrouter_models.go` `buildModelPricing`). |
+| Public read | `GET /v1/pricing` returns the `platform` rows plus the fallback defaults, each with its effective `cache_read_price` (`handleGetPricing`, `modelPriceQuote`; shape `types.PricingResponse`); the OpenRouter model feed renders the same `Rates` as USD-per-token strings — `prompt`, `completion`, `input_cache_read` — via `coordinator/payments/pricing.go` `FormatPerTokenUSD` (`coordinator/api/openrouter_models.go` `buildModelPricing`). |
 
 ### Request lifecycle
 
@@ -323,7 +323,7 @@ the design record is [`design/base-rewards.md`](../design/base-rewards.md).
    writer. Caching is provider-initiated, so there is no cache-write SKU.
    `PrefillTokensSaved` still feeds only the `routing.cache_*` metrics
    (`coordinator/payments/pricing.go` `Rates.Cost`, `RatesFor`;
-   `coordinator/api/model_pricing.go` `billableUsage`;
+   `coordinator/api/cache_usage.go` `billableUsage`, `validCacheUsage`;
    `coordinator/api/cache_usage.go` `validCacheUsage`;
    `coordinator/api/provider.go` `handleCompleteAt`).
 6. **A reservation is settled or refunded at most once.**
@@ -484,7 +484,7 @@ Names are written without the Datadog namespace prefix, which is owned by [telem
 | `billing.overage_micro_usd` | histogram | `model` | `handleCompleteAt` |
 | `billing.settlement_refund_micro_usd` | histogram | `model` | `handleCompleteAt` |
 | `billing.zero_usage_complete` | incr | `model` | `handleCompleteAt` |
-| `billing.cached_prompt_tokens` | count | `model` | `handleCompleteAt` — prompt tokens billed at the cache-read rate (revenue effect = tokens × (input − cache_read)) |
+| `billing.cache_read_discount_micro_usd` | count | `model` | `handleCompleteAt` — µUSD the settled bill was below the same request priced with every prompt token at the input rate (`Rates.CacheReadDiscount`); emitted only for finalized, non-free settlements with a cache hit. The token count itself is `cache_model_cached_tokens` |
 | `billing.provider_credits_micro_usd` | count | `model`, `type:account` | `handleCompleteAt` |
 | `billing.platform_fees_micro_usd` | count | `model` | `handleCompleteAt` |
 | `billing.credit_failed` | incr | `op:settlement_refund\|platform_fee` | `handleCompleteAt` |
@@ -496,7 +496,7 @@ Names are written without the Datadog namespace prefix, which is owned by [telem
 
 | Concern | Files and symbols | Routes |
 |---|---|---|
-| Prices and cost | `coordinator/payments/pricing.go` (`DefaultInputPricePerMillion`, `DefaultOutputPricePerMillion`, `DefaultCacheReadDiscountPercent`, `DefaultCacheReadPrice`, `minimumChargeMicroUSD`, `platformFeePercent`, `Rates`, `Usage`, `RatesFor`, `DefaultRates`, `Rates.Cost`, `Rates.CostWithMinimum`, `resolveFeePercent`, `PlatformFeeWithPercent`, `ProviderPayoutWithPercent`, `FormatPerTokenUSD`, `FormatPerMillionUSD`); `coordinator/api/model_pricing.go` (`modelPriceInput`, `modelPriceFields`, `billableUsage`); `coordinator/store/postgres.go` (`model_prices`, `GetModelPrice`, `SetModelPrice`) | `GET /v1/pricing`, `PUT /v1/pricing`, `DELETE /v1/pricing`, `PUT /v1/admin/pricing`, `POST /v1/admin/models/register` |
+| Prices and cost | `coordinator/payments/pricing.go` (`DefaultInputPricePerMillion`, `DefaultOutputPricePerMillion`, `DefaultCacheReadDiscountPercent`, `DefaultCacheReadPrice`, `minimumChargeMicroUSD`, `platformFeePercent`, `Rates`, `Usage`, `RatesFor`, `DefaultRates`, `Rates.Cost`, `Rates.CostWithMinimum`, `resolveFeePercent`, `PlatformFeeWithPercent`, `ProviderPayoutWithPercent`, `FormatPerTokenUSD`, `FormatPerMillionUSD`); `coordinator/api/model_pricing.go` (`modelPriceInput`, `modelPriceQuote`, `ratesQuote`); `coordinator/api/cache_usage.go` (`billableUsage`); `coordinator/api/types/types.go` (`ModelPriceQuote`, `PricingResponse`, `PriceUpdateResponse`); `coordinator/store/postgres.go` (`model_prices`, `GetModelPrice`, `SetModelPrice`) | `GET /v1/pricing`, `PUT /v1/pricing`, `DELETE /v1/pricing`, `PUT /v1/admin/pricing`, `POST /v1/admin/models/register` |
 | Reservation | `coordinator/api/inference_admission.go` (`reserveInferenceBalance`, `topUpReservationForInlinedMedia`); `coordinator/api/consumer.go` (`reservationCost`, `providerReservationCost`, `reserveAdditionalForProvider`, `explicitMaxTokens`, `ensureMaxTokensBound`, `defaultMaxOutputTokens`); `coordinator/api/reservations.go` (`serviceReservationManager`, `useServiceReservation`) | — |
 | Settlement | `coordinator/api/provider.go` (`handleCompleteAt`); `coordinator/api/consumer.go` (`refundReservedBalance`, `refundProviderExtra`); `coordinator/api/settlement.go` (`settlementHolder`, `holdForSettlement`, `defaultTerminalSettleGrace`); `coordinator/registry/pending_request.go` (`PendingRequest.FinalizeReservation`, `MarkReservationFinalized`); `coordinator/payments/payments.go` (`Ledger.Charge`, `Ledger.RecordUsage`) | `GET /v1/payments/balance`, `GET /v1/payments/usage` |
 | Ledger and balances | `coordinator/store/interface.go` (`LedgerEntryType`, `RewardLedgerTypes`); `coordinator/store/postgres.go` (`balances`, `ledger_entries`, `provider_earnings`, `creditTx`, `creditWithdrawableTx`, `CreditWithdrawableOnce`, `Debit`, `CreditProviderAccount`, `idx_provider_earnings_job`) | `GET /v1/provider/earnings`, `GET /v1/provider/account-earnings`, `GET /v1/me/summary` |

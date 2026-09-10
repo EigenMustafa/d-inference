@@ -176,7 +176,10 @@ export const ENDPOINTS: Endpoint[] = [
   ],
   "fallback_input_price": 50000,
   "fallback_output_price": 200000,
-  "fallback_cache_read_price": 25000
+  "fallback_cache_read_price": 25000,
+  "fallback_input_usd": "$0.0500",
+  "fallback_output_usd": "$0.2000",
+  "fallback_cache_read_usd": "$0.0250"
 }`,
     notes: "Prices are micro-USD per 1M tokens. cache_read_price is what prompt tokens served from a provider's prefix cache cost instead of input_price; models that set no explicit rate default to half the input price.",
   },
@@ -200,12 +203,12 @@ export const ENDPOINTS: Endpoint[] = [
     response: `{
   "usage": [
     {
-      "request_id": "...",
+      "job_id": "...",
       "model": "${EXAMPLE_MODEL}",
       "prompt_tokens": 150,
       "cached_tokens": 120,
       "completion_tokens": 500,
-      "cost_micro_usd": 400,
+      "cost_micro_usd": 104,
       "timestamp": "2026-04-11T22:00:00Z"
     }
   ]

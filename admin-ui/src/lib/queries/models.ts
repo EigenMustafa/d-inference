@@ -28,11 +28,13 @@ export interface ModelRow {
   updated_at: string;
 }
 
-export { DEFAULT_INPUT_PRICE_MICRO, DEFAULT_OUTPUT_PRICE_MICRO, derivedCacheReadMicro } from "@/lib/pricing";
 
 // All registered models, joined to their active version + that version's size.
 // LEFT JOINs so models without an active/ready version still show (size "—").
 // capabilities (TEXT[]) comes back from pg as a JS string array.
+// cache_read_price is read through to_jsonb so the query still succeeds against
+// a replica the coordinator has not migrated yet (the key is simply absent →
+// NULL → shown as the derived rate) instead of failing the whole page.
 export async function listModels(limit = 200): Promise<ModelRow[]> {
   const rows = await query<
     Omit<ModelRow, "min_ram_gb" | "file_count" | "capabilities"> & {
@@ -58,7 +60,7 @@ export async function listModels(limit = 200): Promise<ModelRow[]> {
             mv.aggregate_sha256,
             mp.input_price       AS input_price_micro,
             mp.output_price      AS output_price_micro,
-            mp.cache_read_price  AS cache_read_price_micro,
+            (to_jsonb(mp) ->> 'cache_read_price')::bigint AS cache_read_price_micro,
             mr.created_at,
             mr.updated_at
        FROM model_registry mr

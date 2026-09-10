@@ -1,6 +1,8 @@
 package payments
 
 import (
+	"math"
+	"math/bits"
 	"strconv"
 	"strings"
 
@@ -120,16 +122,20 @@ func RatesFor(price store.ModelPrice, configured bool) Rates {
 // per-token math exactly rather than being floored. Nonzero usage is never
 // free: a request whose exact cost rounds to 0 is charged 1 micro-USD.
 //
-// Malformed usage cannot produce a negative or inflated charge: negative
-// counts bill as 0 and CachedTokens is clamped to PromptTokens.
+// Token counts are provider-reported and untrusted. Malformed usage cannot
+// produce a negative or wrapped charge: negative counts and rates bill as 0,
+// CachedTokens is clamped to PromptTokens, and every product saturates at
+// math.MaxInt64 instead of overflowing — an absurd count then meets the
+// settlement overage clamp (≤ 2× the reservation) rather than turning a
+// wrapped negative cost into a refund.
 func (r Rates) Cost(u Usage) int64 {
 	prompt := max(u.PromptTokens, 0)
 	cached := min(max(u.CachedTokens, 0), prompt)
 	completion := max(u.CompletionTokens, 0)
 
-	cost := int64(prompt-cached)*r.Input/1_000_000 +
-		int64(cached)*r.CacheRead/1_000_000 +
-		int64(completion)*r.Output/1_000_000
+	cost := saturatingAdd(
+		saturatingAdd(termCost(prompt-cached, r.Input), termCost(cached, r.CacheRead)),
+		termCost(completion, r.Output))
 	if cost == 0 && (prompt > 0 || completion > 0) {
 		cost = 1
 	}
@@ -140,6 +146,40 @@ func (r Rates) Cost(u Usage) int64 {
 // applied to direct consumers.
 func (r Rates) CostWithMinimum(u Usage) int64 {
 	return max(r.Cost(u), minimumChargeMicroUSD)
+}
+
+// CacheReadDiscount is how much less Cost charges than it would with every
+// prompt token at Input — the revenue effect of the cache hit, in micro-USD.
+func (r Rates) CacheReadDiscount(u Usage) int64 {
+	cached := min(max(u.CachedTokens, 0), max(u.PromptTokens, 0))
+	return max(termCost(cached, r.Input)-termCost(cached, r.CacheRead), 0)
+}
+
+// termCost is tokens × ratePerMillion / 1_000_000 floored to whole micro-USD,
+// 0 for a non-positive count or rate, saturating at math.MaxInt64 when the
+// product does not fit in 64 bits.
+func termCost(tokens int, ratePerMillion int64) int64 {
+	if tokens <= 0 || ratePerMillion <= 0 {
+		return 0
+	}
+	hi, lo := bits.Mul64(uint64(tokens), uint64(ratePerMillion))
+	if hi >= 1_000_000 {
+		// The quotient itself would not fit in 64 bits.
+		return math.MaxInt64
+	}
+	q, _ := bits.Div64(hi, lo, 1_000_000)
+	if q > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(q)
+}
+
+// saturatingAdd adds two non-negative micro-USD amounts without wrapping.
+func saturatingAdd(a, b int64) int64 {
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // DefaultPlatformFeePercent is the global platform routing fee applied when an

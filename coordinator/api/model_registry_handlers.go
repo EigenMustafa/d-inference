@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eigeninference/d-inference/coordinator/api/types"
 	"github.com/eigeninference/d-inference/coordinator/registry"
 	"github.com/eigeninference/d-inference/coordinator/store"
 )
@@ -42,6 +43,16 @@ type registerModelRequest struct {
 	// Platform price written at registration: input_price and output_price are
 	// required; cache_read_price is optional (see modelPriceInput).
 	modelPriceInput
+}
+
+// registerModelResponse is the POST /v1/admin/models/register response: the
+// stored registry entry and version plus the platform price as it will settle.
+type registerModelResponse struct {
+	Status  string                    `json:"status"`
+	Model   *store.ModelRegistryEntry `json:"model"`
+	Version *store.ModelVersion       `json:"version"`
+	Files   int                       `json:"files"`
+	types.ModelPriceQuote
 }
 
 type publishingActor struct {
@@ -177,12 +188,13 @@ func (s *Server) handleRegisterModel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.SyncModelCatalog()
 
-	resp := modelPriceFields(price)
-	resp["status"] = "registered"
-	resp["model"] = entry
-	resp["version"] = version
-	resp["files"] = len(files)
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, registerModelResponse{
+		Status:          "registered",
+		Model:           entry,
+		Version:         version,
+		Files:           len(files),
+		ModelPriceQuote: modelPriceQuote(price),
+	})
 }
 
 func (s *Server) handleAdminModelRegistryAction(w http.ResponseWriter, r *http.Request) {

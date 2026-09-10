@@ -1,11 +1,5 @@
-import {
-  listModels,
-  countModels,
-  type ModelRow,
-  DEFAULT_INPUT_PRICE_MICRO,
-  DEFAULT_OUTPUT_PRICE_MICRO,
-  derivedCacheReadMicro,
-} from "@/lib/queries/models";
+import { listModels, countModels, type ModelRow } from "@/lib/queries/models";
+import { DEFAULT_INPUT_PRICE_MICRO, DEFAULT_OUTPUT_PRICE_MICRO, derivedCacheReadMicro } from "@/lib/pricing";
 import { DataTable, type Column } from "@/components/DataTable";
 import { formatNumber, formatUSDFromMicro } from "@/lib/format";
 

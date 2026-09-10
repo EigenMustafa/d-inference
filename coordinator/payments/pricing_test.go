@@ -1,6 +1,7 @@
 package payments
 
 import (
+	"math"
 	"testing"
 
 	"github.com/eigeninference/d-inference/coordinator/store"
@@ -132,6 +133,111 @@ func TestCostClampsMalformedUsage(t *testing.T) {
 	}
 	if got := rates.CostWithMinimum(Usage{PromptTokens: -100}); got != MinimumCharge() {
 		t.Errorf("negative usage with minimum = %d, want %d", got, MinimumCharge())
+	}
+}
+
+// Provider-reported counts are untrusted: an absurd count must saturate, never
+// wrap into a negative cost that the settlement path would refund.
+func TestCostSaturatesInsteadOfOverflowing(t *testing.T) {
+	rates := DefaultRates()
+	for _, u := range []Usage{
+		{PromptTokens: 1 << 48},
+		{CompletionTokens: 1 << 48},
+		{PromptTokens: 1 << 62, CachedTokens: 1 << 62},
+		{PromptTokens: math.MaxInt, CompletionTokens: math.MaxInt},
+	} {
+		got := rates.Cost(u)
+		if got < 0 {
+			t.Fatalf("Cost(%+v) = %d, negative", u, got)
+		}
+		// The exact value is irrelevant: it only has to be huge and positive so
+		// the overage clamp in settlement takes over.
+		if got < 1<<40 {
+			t.Fatalf("Cost(%+v) = %d, expected a saturated (huge) charge", u, got)
+		}
+		if rates.CostWithMinimum(u) != got {
+			t.Fatalf("CostWithMinimum(%+v) disagrees with Cost", u)
+		}
+	}
+	// Absurd rates from a corrupt row saturate the same way.
+	huge := Rates{Input: math.MaxInt64, Output: math.MaxInt64, CacheRead: math.MaxInt64}
+	if got := huge.Cost(Usage{PromptTokens: 1 << 40, CompletionTokens: 1 << 40}); got != math.MaxInt64 {
+		t.Fatalf("saturated cost = %d, want MaxInt64", got)
+	}
+	// Negative rates (corrupt row) bill as zero, not as credits.
+	neg := Rates{Input: -1, Output: -1, CacheRead: -1}
+	if got := neg.Cost(Usage{PromptTokens: 1_000, CompletionTokens: 1_000}); got != 1 {
+		t.Fatalf("negative-rate cost = %d, want 1 (nonzero usage floor)", got)
+	}
+}
+
+func TestTermCost(t *testing.T) {
+	if got := termCost(1_000_000, 300_000); got != 300_000 {
+		t.Errorf("1M tokens at 300000 = %d", got)
+	}
+	if got := termCost(3, 500_000); got != 1 {
+		t.Errorf("3 × 0.5 floors to %d, want 1", got)
+	}
+	if got := termCost(0, 500_000); got != 0 {
+		t.Errorf("zero tokens = %d", got)
+	}
+	if got := termCost(-5, 500_000); got != 0 {
+		t.Errorf("negative tokens = %d", got)
+	}
+	// Just below and above the 64-bit product boundary.
+	if got := termCost(1<<32, 1<<31); got != (1<<63)/1_000_000 {
+		t.Errorf("2^63 product = %d, want %d", got, (1<<63)/1_000_000)
+	}
+	// 2^80 overflows the product but its quotient (÷1e6 ≈ 1.2e18) fits.
+	if got := termCost(1<<40, 1<<40); got != int64(1208925819614629174) {
+		t.Errorf("2^80 product = %d, want 1208925819614629174", got)
+	}
+	// 2^83: the 128-bit quotient still fits in uint64 but not in int64.
+	if got := termCost(1<<43, 1<<40); got != math.MaxInt64 {
+		t.Errorf("2^83 product = %d, want MaxInt64", got)
+	}
+	// 2^100: the quotient itself exceeds 64 bits.
+	if got := termCost(1<<50, 1<<50); got != math.MaxInt64 {
+		t.Errorf("2^100 product = %d, want MaxInt64", got)
+	}
+}
+
+// Each term floors independently, so the settled cost is never above the
+// exact per-token math and at most 3 µUSD below it — the direction OpenRouter
+// would observe when it recomputes the cost from the usage and the feed.
+func TestCostFloorsEachTermTowardsZero(t *testing.T) {
+	rates := Rates{Input: 333_333, Output: 777_777, CacheRead: 111_111}
+	u := Usage{PromptTokens: 12_345, CachedTokens: 6_789, CompletionTokens: 987}
+	exact := float64(u.PromptTokens-u.CachedTokens)*float64(rates.Input)/1e6 +
+		float64(u.CachedTokens)*float64(rates.CacheRead)/1e6 +
+		float64(u.CompletionTokens)*float64(rates.Output)/1e6
+	got := rates.Cost(u)
+	if float64(got) > exact {
+		t.Fatalf("cost %d exceeds exact %.3f", got, exact)
+	}
+	if exact-float64(got) >= 3 {
+		t.Fatalf("cost %d undercharges exact %.3f by 3 µUSD or more", got, exact)
+	}
+}
+
+func TestCacheReadDiscount(t *testing.T) {
+	rates := Rates{Input: 300_000, Output: 1_200_000, CacheRead: 30_000}
+	// 8,000 cached tokens: 2,400 at the input rate vs 240 at the cache rate.
+	if got := rates.CacheReadDiscount(Usage{PromptTokens: 10_000, CachedTokens: 8_000}); got != 2_160 {
+		t.Fatalf("discount = %d, want 2160", got)
+	}
+	if got := rates.CacheReadDiscount(Usage{PromptTokens: 10_000}); got != 0 {
+		t.Fatalf("no cache hit discount = %d, want 0", got)
+	}
+	// Clamped like Cost: cached beyond the prompt counts only up to the prompt.
+	if got := rates.CacheReadDiscount(Usage{PromptTokens: 100, CachedTokens: 1_000}); got != 30-3 {
+		t.Fatalf("over-reported discount = %d, want 27", got)
+	}
+	// Cost + discount == the cold cost of the same request.
+	u := Usage{PromptTokens: 10_000, CachedTokens: 8_000, CompletionTokens: 500}
+	cold := rates.Cost(Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens})
+	if rates.Cost(u)+rates.CacheReadDiscount(u) != cold {
+		t.Fatalf("cost %d + discount %d != cold %d", rates.Cost(u), rates.CacheReadDiscount(u), cold)
 	}
 }
 

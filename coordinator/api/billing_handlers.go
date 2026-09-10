@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eigeninference/d-inference/coordinator/api/types"
 	"github.com/eigeninference/d-inference/coordinator/auth"
 	"github.com/eigeninference/d-inference/coordinator/billing"
 	"github.com/eigeninference/d-inference/coordinator/payments"
@@ -342,22 +343,20 @@ func (s *Server) handleReferralInfo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetPricing(w http.ResponseWriter, r *http.Request) {
 	// All model prices come from the database (set via PUT /v1/admin/pricing).
 	platformPrices := s.store.ListModelPrices("platform")
-	prices := make([]map[string]any, 0, len(platformPrices))
+	prices := make([]types.PriceEntry, 0, len(platformPrices))
 	for _, mp := range platformPrices {
-		entry := modelPriceFields(mp)
-		entry["model"] = mp.Model
-		prices = append(prices, entry)
+		prices = append(prices, types.PriceEntry{Model: mp.Model, ModelPriceQuote: modelPriceQuote(mp)})
 	}
 
-	fallback := payments.DefaultRates()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"prices":                    prices,
-		"fallback_input_price":      fallback.Input,
-		"fallback_output_price":     fallback.Output,
-		"fallback_cache_read_price": fallback.CacheRead,
-		"fallback_input_usd":        payments.FormatPerMillionUSD(fallback.Input),
-		"fallback_output_usd":       payments.FormatPerMillionUSD(fallback.Output),
-		"fallback_cache_read_usd":   payments.FormatPerMillionUSD(fallback.CacheRead),
+	fallback := ratesQuote(payments.DefaultRates())
+	writeJSON(w, http.StatusOK, types.PricingResponse{
+		Prices:                 prices,
+		FallbackInputPrice:     fallback.InputPrice,
+		FallbackOutputPrice:    fallback.OutputPrice,
+		FallbackCacheReadPrice: fallback.CacheReadPrice,
+		FallbackInputUSD:       fallback.InputUSD,
+		FallbackOutputUSD:      fallback.OutputUSD,
+		FallbackCacheReadUSD:   fallback.CacheReadUSD,
 	})
 }
 
@@ -394,17 +393,15 @@ func (s *Server) handleAdminPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := modelPriceFields(price)
+	quote := modelPriceQuote(price)
 	s.logger.Info("admin: platform price updated",
 		"model", req.Model,
-		"input_price", resp["input_price"],
-		"output_price", resp["output_price"],
-		"cache_read_price", resp["cache_read_price"],
+		"input_price", quote.InputPrice,
+		"output_price", quote.OutputPrice,
+		"cache_read_price", quote.CacheReadPrice,
 	)
 
-	resp["status"] = "platform_default_updated"
-	resp["model"] = req.Model
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, types.PriceUpdateResponse{Status: "platform_default_updated", Model: req.Model, ModelPriceQuote: quote})
 }
 
 // handleAdminSetUserRole handles PUT /v1/admin/users/role.
@@ -524,10 +521,7 @@ func (s *Server) handleSetPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := modelPriceFields(price)
-	resp["status"] = "updated"
-	resp["model"] = req.Model
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, types.PriceUpdateResponse{Status: "updated", Model: req.Model, ModelPriceQuote: modelPriceQuote(price)})
 }
 
 // handleDeletePricing handles DELETE /v1/pricing.

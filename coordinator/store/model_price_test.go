@@ -116,6 +116,44 @@ func TestPostgresModelPricesMigrationAddsCacheReadColumn(t *testing.T) {
 	}
 }
 
+// A usage table created before cached_tokens existed gains the column on the
+// next migrate(); rows written before it read back as 0 cached tokens (they
+// were billed at the full input price) and new rows persist their count.
+func TestPostgresUsageMigrationAddsCachedTokensColumn(t *testing.T) {
+	s := testPostgresStore(t)
+	ctx := context.Background()
+	if _, err := s.pool.Exec(ctx, "ALTER TABLE usage DROP COLUMN IF EXISTS cached_tokens"); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	legacyReq := uniqueID("legacy-usage")
+	consumer := uniqueID("legacy-consumer")
+	if _, err := s.pool.Exec(ctx,
+		"INSERT INTO usage (provider_id, consumer_key_hash, model, prompt_tokens, completion_tokens, request_id, cost_micro_usd) VALUES ('p', $1, 'm', 100, 10, $2, 7)",
+		hashKey(consumer), legacyReq); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s.RecordUsage(UsageRecord{ProviderID: "p", ConsumerKey: consumer, Model: "m", RequestID: uniqueID("new-usage"), PromptTokens: 100, CachedTokens: 60, CompletionTokens: 10, CostMicroUSD: 5})
+
+	byReq := map[string]UsageRecord{}
+	for _, r := range s.UsageByConsumer(consumer) {
+		byReq[r.RequestID] = r
+	}
+	if got, ok := byReq[legacyReq]; !ok || got.CachedTokens != 0 || got.PromptTokens != 100 {
+		t.Fatalf("legacy row = %+v ok=%v, want cached_tokens 0", got, ok)
+	}
+	if len(byReq) != 2 {
+		t.Fatalf("rows for consumer = %d, want 2 (legacy + new)", len(byReq))
+	}
+	for id, r := range byReq {
+		if id != legacyReq && r.CachedTokens != 60 {
+			t.Fatalf("new row = %+v, want cached_tokens 60", r)
+		}
+	}
+}
+
 // Usage rows persist the cached-token count and every reader returns it.
 func TestUsageRecordCachedTokens(t *testing.T) {
 	for name, s := range storeBackends(t) {

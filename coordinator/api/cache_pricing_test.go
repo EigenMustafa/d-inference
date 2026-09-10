@@ -360,17 +360,7 @@ func TestAdminPricingCacheReadRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var pricing struct {
-		Prices []struct {
-			Model          string `json:"model"`
-			InputPrice     int64  `json:"input_price"`
-			OutputPrice    int64  `json:"output_price"`
-			CacheReadPrice int64  `json:"cache_read_price"`
-			CacheReadUSD   string `json:"cache_read_usd"`
-		} `json:"prices"`
-		FallbackCacheReadPrice int64  `json:"fallback_cache_read_price"`
-		FallbackCacheReadUSD   string `json:"fallback_cache_read_usd"`
-	}
+	var pricing types.PricingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&pricing); err != nil {
 		t.Fatal(err)
 	}

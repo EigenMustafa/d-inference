@@ -1,8 +1,8 @@
 import { Globe } from "lucide-react";
 
-// Payout-coverage caveat shown next to the Stripe country picker. Wording
-// agreed with legal — running a provider does not by itself guarantee a
-// payout path in every region (Stripe Connect coverage varies by country).
+// Payout-coverage caveat shown next to the Stripe country picker — running
+// a provider does not by itself guarantee a payout path in every region
+// (Stripe Connect coverage varies by country).
 export function PayoutCoverageNotice() {
   return (
     <div className="flex items-start gap-2.5 rounded-lg border border-accent-amber/20 bg-accent-amber-dim px-4 py-3 mb-4">
@@ -12,7 +12,7 @@ export function PayoutCoverageNotice() {
         itself, establish payout availability in certain regions. We are
         actively evaluating additional jurisdictions for payment integration;
         however, we cannot confirm whether or when coverage will extend to
-        your country.
+        every country.
       </p>
     </div>
   );

@@ -2350,23 +2350,33 @@ func (s *Server) handleCompleteAt(
 	// Service/wholesale traffic is billed at the advertised platform price
 	// (never a provider's higher custom price) and is exempt from the minimum,
 	// so the debit matches the published per-token OpenRouter feed exactly.
+	//
+	// Prompt tokens the provider served from its prefix cache bill at the
+	// cache-read rate (the feed's input_cache_read); the cache usage was
+	// validated above, so billableUsage sees the same cached_tokens the
+	// consumer does and the bill and the usage agree.
 	providerAccountForPricing := ""
 	if p := s.registry.GetProvider(providerID); p != nil {
 		providerAccountForPricing = providerPricingKeys(p)
 	}
-	var customIn, customOut int64
-	var hasCustom bool
+	var price store.ModelPrice
+	var priced bool
 	if !isServiceConsumer {
-		customIn, customOut, hasCustom = s.store.GetModelPrice(providerAccountForPricing, pr.Model)
+		price, priced = s.store.GetModelPrice(providerAccountForPricing, pr.Model)
 	}
-	if !hasCustom {
-		customIn, customOut, hasCustom = s.store.GetModelPrice("platform", pr.Model)
+	if !priced {
+		price, priced = s.store.GetModelPrice("platform", pr.Model)
 	}
+	rates := payments.RatesFor(price, priced)
+	billable := billableUsage(msg.Usage)
 	var totalCost int64
 	if isServiceConsumer {
-		totalCost = payments.CalculateCostWithOverridesNoMinimum(pr.Model, msg.Usage.PromptTokens, msg.Usage.CompletionTokens, customIn, customOut, hasCustom)
+		totalCost = rates.Cost(billable)
 	} else {
-		totalCost = payments.CalculateCostWithOverrides(pr.Model, msg.Usage.PromptTokens, msg.Usage.CompletionTokens, customIn, customOut, hasCustom)
+		totalCost = rates.CostWithMinimum(billable)
+	}
+	if billable.CachedTokens > 0 {
+		s.ddCount("billing.cached_prompt_tokens", int64(billable.CachedTokens), []string{"model:" + pr.Model})
 	}
 
 	providerPayout := payments.ProviderPayoutWithPercent(totalCost, feePercent)
@@ -2566,6 +2576,7 @@ func (s *Server) handleCompleteAt(
 			JobID:            msg.RequestID,
 			Model:            consumerModel(pr),
 			PromptTokens:     msg.Usage.PromptTokens,
+			CachedTokens:     billable.CachedTokens,
 			CompletionTokens: msg.Usage.CompletionTokens,
 			CostMicroUSD:     totalCost,
 			Timestamp:        time.Now(),
@@ -2582,8 +2593,21 @@ func (s *Server) handleCompleteAt(
 		// traffic out of public stats. The owner still sees it via the in-memory
 		// RecordUsage above (their session/transparency view).
 		if !freeSelfRoute {
+			usageRow := store.UsageRecord{
+				ProviderID:       providerID,
+				ConsumerKey:      pr.ConsumerKey,
+				KeyID:            pr.KeyID,
+				Model:            pr.Model,
+				PublicModel:      consumerModel(pr),
+				PromptTokens:     msg.Usage.PromptTokens,
+				CachedTokens:     billable.CachedTokens,
+				CompletionTokens: msg.Usage.CompletionTokens,
+				RequestID:        msg.RequestID,
+				CostMicroUSD:     totalCost,
+				RequestLocation:  pr.ConsumerLocation,
+			}
 			saferun.Go(s.logger, "recordUsage", func() {
-				s.store.RecordUsageFullWithPublicModel(providerID, pr.ConsumerKey, pr.KeyID, pr.Model, consumerModel(pr), msg.RequestID, msg.Usage.PromptTokens, msg.Usage.CompletionTokens, totalCost, pr.ConsumerLocation)
+				s.store.RecordUsage(usageRow)
 			})
 		}
 

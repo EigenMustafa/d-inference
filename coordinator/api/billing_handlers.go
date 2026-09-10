@@ -335,36 +335,29 @@ func (s *Server) handleReferralInfo(w http.ResponseWriter, r *http.Request) {
 // --- Pricing ---
 
 // handleGetPricing handles GET /v1/pricing.
-// Public endpoint — returns platform default prices. Also overlays platform
-// DB overrides (set via admin endpoint).
+// Public endpoint — returns the platform price rows (set via the admin
+// endpoint and model registration) plus the fallback defaults. Every entry
+// carries the effective cache-read rate, derived when the row sets none, so
+// consumers see the rate cached prompt tokens actually settle at.
 func (s *Server) handleGetPricing(w http.ResponseWriter, r *http.Request) {
-	type priceEntry struct {
-		Model       string `json:"model"`
-		InputPrice  int64  `json:"input_price"`  // micro-USD per 1M tokens
-		OutputPrice int64  `json:"output_price"` // micro-USD per 1M tokens
-		InputUSD    string `json:"input_usd"`
-		OutputUSD   string `json:"output_usd"`
-	}
-
 	// All model prices come from the database (set via PUT /v1/admin/pricing).
 	platformPrices := s.store.ListModelPrices("platform")
-	prices := make([]priceEntry, 0, len(platformPrices))
+	prices := make([]map[string]any, 0, len(platformPrices))
 	for _, mp := range platformPrices {
-		prices = append(prices, priceEntry{
-			Model:       mp.Model,
-			InputPrice:  mp.InputPrice,
-			OutputPrice: mp.OutputPrice,
-			InputUSD:    fmt.Sprintf("$%.4f", float64(mp.InputPrice)/1_000_000),
-			OutputUSD:   fmt.Sprintf("$%.4f", float64(mp.OutputPrice)/1_000_000),
-		})
+		entry := modelPriceFields(mp)
+		entry["model"] = mp.Model
+		prices = append(prices, entry)
 	}
 
+	fallback := payments.DefaultRates()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"prices":                prices,
-		"fallback_input_price":  payments.DefaultInputPricePerMillion,
-		"fallback_output_price": payments.DefaultOutputPricePerMillion,
-		"fallback_input_usd":    fmt.Sprintf("$%.4f", float64(payments.DefaultInputPricePerMillion)/1_000_000),
-		"fallback_output_usd":   fmt.Sprintf("$%.4f", float64(payments.DefaultOutputPricePerMillion)/1_000_000),
+		"prices":                    prices,
+		"fallback_input_price":      fallback.Input,
+		"fallback_output_price":     fallback.Output,
+		"fallback_cache_read_price": fallback.CacheRead,
+		"fallback_input_usd":        payments.FormatPerMillionUSD(fallback.Input),
+		"fallback_output_usd":       payments.FormatPerMillionUSD(fallback.Output),
+		"fallback_cache_read_usd":   payments.FormatPerMillionUSD(fallback.CacheRead),
 	})
 }
 
@@ -377,9 +370,8 @@ func (s *Server) handleAdminPricing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Model       string `json:"model"`
-		InputPrice  int64  `json:"input_price"`
-		OutputPrice int64  `json:"output_price"`
+		Model string `json:"model"`
+		modelPriceInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid JSON: "+err.Error()))
@@ -389,32 +381,30 @@ func (s *Server) handleAdminPricing(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "model is required", withParam("model")))
 		return
 	}
-	if req.InputPrice <= 0 || req.OutputPrice <= 0 {
-		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "input_price and output_price must be positive"))
+	if err := req.validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", err.Error()))
 		return
 	}
 
 	// Store under the special "platform" account.
-	if err := s.store.SetModelPrice("platform", req.Model, req.InputPrice, req.OutputPrice); err != nil {
+	price := req.modelPrice("platform", req.Model)
+	if err := s.store.SetModelPrice(price); err != nil {
 		s.logger.Error("admin pricing: set failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to set price"))
 		return
 	}
 
+	resp := modelPriceFields(price)
 	s.logger.Info("admin: platform price updated",
 		"model", req.Model,
-		"input_price", req.InputPrice,
-		"output_price", req.OutputPrice,
+		"input_price", resp["input_price"],
+		"output_price", resp["output_price"],
+		"cache_read_price", resp["cache_read_price"],
 	)
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "platform_default_updated",
-		"model":        req.Model,
-		"input_price":  req.InputPrice,
-		"output_price": req.OutputPrice,
-		"input_usd":    fmt.Sprintf("$%.4f per 1M tokens", float64(req.InputPrice)/1_000_000),
-		"output_usd":   fmt.Sprintf("$%.4f per 1M tokens", float64(req.OutputPrice)/1_000_000),
-	})
+	resp["status"] = "platform_default_updated"
+	resp["model"] = req.Model
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleAdminSetUserRole handles PUT /v1/admin/users/role.
@@ -511,9 +501,8 @@ func (s *Server) handleSetPricing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Model       string `json:"model"`
-		InputPrice  int64  `json:"input_price"`
-		OutputPrice int64  `json:"output_price"`
+		Model string `json:"model"`
+		modelPriceInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "invalid JSON: "+err.Error()))
@@ -523,26 +512,22 @@ func (s *Server) handleSetPricing(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "model is required", withParam("model")))
 		return
 	}
-	if req.InputPrice <= 0 || req.OutputPrice <= 0 {
-		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", "input_price and output_price must be positive (micro-USD per 1M tokens)"))
+	if err := req.validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse("invalid_request_error", err.Error()))
 		return
 	}
 
-	accountID := s.resolveAccountID(r)
-	if err := s.store.SetModelPrice(accountID, req.Model, req.InputPrice, req.OutputPrice); err != nil {
+	price := req.modelPrice(s.resolveAccountID(r), req.Model)
+	if err := s.store.SetModelPrice(price); err != nil {
 		s.logger.Error("pricing: set failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "failed to set price"))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "updated",
-		"model":        req.Model,
-		"input_price":  req.InputPrice,
-		"output_price": req.OutputPrice,
-		"input_usd":    fmt.Sprintf("$%.4f per 1M tokens", float64(req.InputPrice)/1_000_000),
-		"output_usd":   fmt.Sprintf("$%.4f per 1M tokens", float64(req.OutputPrice)/1_000_000),
-	})
+	resp := modelPriceFields(price)
+	resp["status"] = "updated"
+	resp["model"] = req.Model
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleDeletePricing handles DELETE /v1/pricing.

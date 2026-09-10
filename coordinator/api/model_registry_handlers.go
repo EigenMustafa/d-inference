@@ -39,8 +39,9 @@ type registerModelRequest struct {
 	RuntimeParameters            map[string]any             `json:"runtime_parameters"`
 	Metadata                     map[string]any             `json:"metadata"`
 	Promote                      bool                       `json:"promote"`
-	InputPrice                   int64                      `json:"input_price"`  // micro-USD per 1M tokens (required)
-	OutputPrice                  int64                      `json:"output_price"` // micro-USD per 1M tokens (required)
+	// Platform price written at registration: input_price and output_price are
+	// required; cache_read_price is optional (see modelPriceInput).
+	modelPriceInput
 }
 
 type publishingActor struct {
@@ -160,7 +161,8 @@ func (s *Server) handleRegisterModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Set platform pricing for this model.
-	if err := s.store.SetModelPrice("platform", req.ModelID, req.InputPrice, req.OutputPrice); err != nil {
+	price := req.modelPrice("platform", req.ModelID)
+	if err := s.store.SetModelPrice(price); err != nil {
 		s.logger.Error("model registry: set pricing failed", "model_id", req.ModelID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse("internal_error", "model registered but failed to set pricing"))
 		return
@@ -175,14 +177,12 @@ func (s *Server) handleRegisterModel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.SyncModelCatalog()
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "registered",
-		"model":        entry,
-		"version":      version,
-		"files":        len(files),
-		"input_price":  req.InputPrice,
-		"output_price": req.OutputPrice,
-	})
+	resp := modelPriceFields(price)
+	resp["status"] = "registered"
+	resp["model"] = entry
+	resp["version"] = version
+	resp["files"] = len(files)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleAdminModelRegistryAction(w http.ResponseWriter, r *http.Request) {
@@ -602,11 +602,8 @@ func validateRegisterModelRequest(req registerModelRequest) error {
 	if req.MinRAMGB <= 0 {
 		return fmt.Errorf("min_ram_gb must be greater than zero")
 	}
-	if req.InputPrice <= 0 {
-		return fmt.Errorf("input_price is required and must be positive (micro-USD per 1M tokens)")
-	}
-	if req.OutputPrice <= 0 {
-		return fmt.Errorf("output_price is required and must be positive (micro-USD per 1M tokens)")
+	if err := req.modelPriceInput.validate(); err != nil {
+		return err
 	}
 	if err := validateRequiredProviderCapabilities(
 		req.ModelID, req.RequiredProviderCapabilities); err != nil {

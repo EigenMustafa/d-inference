@@ -205,7 +205,9 @@ type ModelMetadata struct {
 // ModelPricing is the per-token pricing block in the /v1/models response.
 // All values are USD strings (per the OpenRouter provider schema) to avoid
 // floating-point precision issues. prompt/completion are per-token;
-// image/request are per-image / per-request; input_cache_read is per-token.
+// image/request are per-image / per-request; input_cache_read is the per-token
+// rate for prompt tokens served from a provider's prefix cache (reported to
+// the consumer as prompt_tokens_details.cached_tokens).
 type ModelPricing struct {
 	Prompt         string `json:"prompt"`
 	Completion     string `json:"completion"`

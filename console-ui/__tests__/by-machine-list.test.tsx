@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import {
   ByMachineList,
   machineLabel,
-  displayLabels,
+  machineId,
   type MachineEarnings,
 } from "@/app/providers/earnings/ByMachineList";
 
@@ -18,49 +18,46 @@ const machine = (overrides: Partial<MachineEarnings>): MachineEarnings => ({
   ...overrides,
 });
 
-describe("machineLabel", () => {
+describe("machineLabel / machineId", () => {
   it("uses chip and memory when known", () => {
     expect(machineLabel(machine({ chip_name: "Apple M4 Max", memory_gb: 64 }))).toBe(
       "Apple M4 Max · 64 GB",
     );
   });
 
-  it("falls back to a key suffix without hardware info", () => {
-    expect(machineLabel(machine({ provider_key: "abcdef123456" }))).toBe("Machine …123456");
+  it("falls back to a generic label without hardware info", () => {
+    expect(machineLabel(machine({}))).toBe("Machine");
   });
 
-  it("labels the empty key as Other", () => {
+  it("labels the empty key as Other with no ID", () => {
     expect(machineLabel(machine({ provider_key: "" }))).toBe("Other");
+    expect(machineId(machine({ provider_key: "" }))).toBe("");
   });
-});
 
-describe("displayLabels", () => {
-  it("disambiguates identical hardware with key suffixes", () => {
-    const labels = displayLabels([
-      machine({ provider_key: "key-one-aaaaaa", chip_name: "Apple M4 Max", memory_gb: 64 }),
-      machine({ provider_key: "key-two-bbbbbb", chip_name: "Apple M4 Max", memory_gb: 64 }),
-      machine({ provider_key: "key-three-cccccc", chip_name: "Apple M3 Pro", memory_gb: 36 }),
-    ]);
-    expect(labels).toEqual([
-      "Apple M4 Max · 64 GB (…aaaaaa)",
-      "Apple M4 Max · 64 GB (…bbbbbb)",
-      "Apple M3 Pro · 36 GB",
-    ]);
+  it("derives the ID from the stable key tail", () => {
+    expect(machineId(machine({ provider_key: "abcdef123456" }))).toBe("ID …123456");
   });
 });
 
 describe("ByMachineList", () => {
-  it("renders one row per machine with earnings and jobs", () => {
+  it("shows every machine with an always-visible ID", () => {
     render(
       <ByMachineList
         machines={[
-          machine({ chip_name: "Apple M4 Max", memory_gb: 64 }),
-          machine({ provider_key: "zzzz11223344", total_usd: "0.250000" }),
+          machine({ provider_key: "key-one-aaaaaa", chip_name: "Apple M4 Max", memory_gb: 64 }),
+          machine({
+            provider_key: "key-two-dddddd",
+            chip_name: "Apple M4 Max",
+            memory_gb: 64,
+            total_usd: "0.250000",
+          }),
         ]}
       />,
     );
-    expect(screen.getByText("Apple M4 Max · 64 GB")).toBeTruthy();
-    expect(screen.getByText("Machine …223344")).toBeTruthy();
+    // Identical hardware stays distinguishable because the ID is always shown.
+    expect(screen.getAllByText("Apple M4 Max · 64 GB")).toHaveLength(2);
+    expect(screen.getByText("ID …aaaaaa")).toBeTruthy();
+    expect(screen.getByText("ID …dddddd")).toBeTruthy();
     expect(screen.getByText("$1.500000")).toBeTruthy();
     expect(screen.getByText("$0.250000")).toBeTruthy();
     // "Last earned" was cut deliberately — it read as "last active" but only

@@ -20,6 +20,7 @@ import {
   StripeWithdrawModal,
   useStripePayouts,
 } from "@/components/payouts";
+import { ByMachineList, type MachineEarnings } from "./ByMachineList";
 
 interface Earning {
   id: number;
@@ -36,6 +37,7 @@ interface Earning {
 interface EarningsResponse {
   account_id: string;
   earnings: Earning[];
+  by_provider?: MachineEarnings[];
   total_micro_usd: number;
   total_usd: string;
   count: number;
@@ -223,6 +225,9 @@ export default function EarningsContent() {
           )}
         </div>
       </StripePayoutsCard>
+
+      {/* Lifetime earnings per machine */}
+      <ByMachineList machines={data?.by_provider ?? []} />
 
       {/* Earnings history */}
       <div>
